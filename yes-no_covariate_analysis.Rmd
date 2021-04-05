@@ -1,0 +1,243 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+load data
+
+```{r}
+load('schizo.sept.21.RData')
+```
+
+
+
+fraction.pal[1]='#B00068'
+fraction.pal[2]='#325A9B'
+
+```{r}
+fraction.pal <- setNames(rev(rainbow(length(levels(fraction)))),levels(fraction));
+
+fraction.pal[1]='#B00068'
+fraction.pal[2]='#325A9B'
+fraction.pal
+```
+
+
+```{r}
+tans=ano
+celldiseasef=fraction
+rpal <- function(n) sample(rainbow(n))
+dpal <- c('control'='#B00068','schizo'='#325A9B')
+dpalf <- function(n) dpal
+p2 <- con$plotGraph(alpha=0.02,size=0.1,groups=celldiseasef[names(celldiseasef) %in% names(tans$med.clean)],font.size=c(3,5),raster=T,raster.width=4,raster.height=4,plot.na=F,mark.groups=F,palette=dpalf)+ theme(legend.position=c(0.12, 0.14)) + guides(color=guide_legend(override.aes = list(size=3,alpha=0.8),title=''))
+pdf(file='schizo.cont.colors.pdf',width=4,height=4); print(p2); dev.off();
+
+```
+
+
+
+
+
+
+
+```{r}
+library(conos)
+library(cacoa)
+library(ggplot2)
+library(magrittr)
+library(ggpubr)
+
+```
+
+
+```{r}
+sample.groups
+
+```
+
+
+```{r}
+sample.groups=sample.groups[names(sample.groups)!='MB8-2']
+sample.groups
+```
+
+```{r}
+table(sexfactor)
+```
+
+```{r}
+Female = Toch(sexfactor)
+Female[Female=='F']='Yes'
+Female[Female=='M']='No'
+hypoxiafactor[1:4]
+Female=as.factor(Female)
+Female[1:4]
+```
+
+
+```{r}
+vec=list('Signs of postmortem brain hypoxia'=hypoxiafactor,
+         'Female'=Female,
+         'Typical neuroleptics'=typicalfactor,
+         'Atypical neuroleptics'=atypicalfactor,
+         'Benzodiazepines'=benzofactor,
+         'Barbiturates'=barbifactor,
+         'Tricyclic'=tricycfactor,
+         'SIRT NE transporter inhibitors antidepressants'=sirtfactor,
+         'Tamoxifen chemotherapy'=tamoxifactor,
+         'Anti-proliferative chemotherapy'=proliffactor,
+         'Radiotherapy'=radiofactor,
+         'Cancer'=cancerfactor,
+         'Hypertension'=hyperfactor,
+         'Depression'=deprfactor,
+         'Malnutrition'=malnutrfactor,
+         'Breathing problems'=breathfactor,
+         'Opioid modulators'=opioidfactor,
+         'Dopaminergic modulators'=dopaminefactor,
+         'Serotoninergic modulators'=serotoninefactor,
+         'Glutamatergic modulators'=glufactor,
+         'GABAergic modulators'=gabafactor,
+         'Histaminergic modulators'=histfactor,
+         'Muscarine receptors modulators'=muscarfactor,
+         'Nicotine receptors modulators'=nicofactor,
+         'Adrenergic modulators'=adrenfactor,
+         'Purinergic modulators'=adenfactor,
+         'Glycine receptors modulators'=glycinefactor,
+         'Sodium channels modulators'=nafactor,
+         'Potassium channels modulators'=kfactor,
+         'Calcium channels modulators'=cafactor,
+         'Proton pump modulators'=protonfactor,
+         'MAO modulators'=maofactor,
+         'Mitochondrial e transport modulators'=mitofactor,
+         'Smoking'=smokefactor
+         )
+```
+
+remove category with only one sample
+```{r}
+nn=names(vec)
+nn=nn[!nn %in% c("Barbiturates",'Tamoxifen chemotherapy')]
+```
+
+
+
+```{r}
+Toch=function(conosCluster){
+  cluster2=as.character(conosCluster)
+  names(cluster2)=names(conosCluster)
+  return(cluster2)
+}
+```
+
+
+```{r}
+library(scProcess)
+```
+
+create sample groups 
+
+```{r}
+res=lapply(sn(names(vec)),function(x){
+  temp=vec[[x]]
+  temp=Toch(temp[cname]) %>% .[.!='n.a.'] %>% as.factor()
+
+  tsample.groups <- tapply(anoSample[names(temp)],temp,unique)
+  tsample.groups <- as.factor(setNames(rep(names(tsample.groups),unlist(lapply(tsample.groups,length))),unlist(tsample.groups)))
+  tsample.groups
+})
+#res
+
+res=res[nn]
+
+```
+
+
+```{r}
+n1=sample.groups
+n1
+```
+
+
+prepare data 
+```{r}
+tabl=lapply(sn(names(res)),function(x) {
+  n2=res[[x]]
+  tab=table(n2,n1[names(n2)])
+  tab
+})
+
+tabl[[1]]
+```
+
+
+```{r}
+
+datNo=do.call(rbind,lapply(tabl,function(x) x['No',]))
+datYes=do.call(rbind,lapply(tabl,function(x) x['Yes',]))
+
+
+
+```
+
+
+```{r fig.width=8,fig.height=9}
+
+library(reshape2)
+d1=setNames(melt(datYes), c('rows', 'vars', 'values'))
+d1$type='No'
+
+d2=setNames(melt(datNo), c('rows', 'vars', 'values'))
+d2$type='Yes'
+
+dd=rbind(d1,d2)
+#dd
+
+
+
+dd$name=paste(dd$rows,dd$type)
+
+p <- ggplot(data=dd, aes(x=name, y=values, fill=vars)) +
+geom_bar(stat="identity", color="black")+ coord_flip()+xlab('')+ylab('')
+  #theme_minimal()+theme_classic() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p=p+scale_fill_manual(values=fraction.pal)
+p
+
+```
+
+```{r}
+ggsave('condition.barplot2.pdf',p,height=10,width=8)
+
+```
+
+
+```{r}
+tabl[['Atypical neuroleptics']]
+```
+
+
+```{r}
+write.table(dd,'condition.barplot.pvalue2.csv',sep='\t',col.names=T,row.names=F)
+
+```
+
+```{r}
+write.csv(dd,'condition.barplot.pvalue2.csv' )
+
+```
+
+
+```{r}
+pvalue.list = lapply(tabl,function(x) fisher.test(data.matrix(x))$p.value) 
+pvalue.l=do.call(c,pvalue.list)
+pvalue.l
+
+
+dd=data.frame('condition'=names(pvalue.l),'p.vlaue'=pvalue.l)
+write.csv(dd,'condition.barplot.pvalue2.csv' )
+
+#write.table(dd,'condition.barplot.pvalue.xls',sep='\t',col.names=T,row.names=F)
+```
+
+
+
+
