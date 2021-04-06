@@ -1,0 +1,5447 @@
+---
+title: "Estimation of cortical neuronal subtypes locations from Allen Brain anterior cingulate cortex human cortex data"
+output: html_notebook
+author: "MB"
+---
+
+# Load libraries
+
+```{r message=FALSE, warning=FALSE}
+  library(pagoda2)
+  library(conos) #!!!USED 1.2.1 version of conos here
+  library(magrittr)
+  library(scrattch.io)
+  library(readr)
+  library(data.table)
+  library(ggplot2)
+  library(gridExtra)
+  library(pals)
+  library(uwot)
+  library(forcats)
+  library(ggforce)
+  library(Hmisc)
+  library(viridis)
+  library(rhdf5) #from bioconductor, for hdf5 matrices
+  library(readxl) #import xlsx files
+  library(dplyr)
+  library(writexl)
+  library(cowplot) #plot_grid function
+  library(patchwork)
+  library(ggalluvial)
+  library("ggrepel")
+  library("car") #leveneTest
+  library("ggsignif") #geom_signif stat_signif
+```
+
+# Palettes
+
+```{r}
+#palette
+palette_45 <- c(
+as.vector(polychrome(36)),
+as.vector(alphabet(10))
+)
+
+palette_45_2 <- c(
+as.vector(polychrome(36)),
+as.vector(alphabet(10))
+)
+
+
+#Remove some faint colors
+#palette_45 <- palette_45[c(-2, -5, -25, -28, -31)][c(-22, -26, -32, -41)]
+palette_45 <- palette_45[c(-2, -5, -9, -24, -27, -28, -30, -46)]
+
+
+plot(c(1:38), col = palette_45, pch = 16)
+
+length(palette_45)
+
+#make consisten palettes
+
+high.pal <- setNames(palette_45, levels(annotations_scz2$high))
+
+
+
+med.pal <- setNames(c("#5A5156", "#F6222E", "#FEAF16", "#B00068", "#2ED9FF", "#AA0DFE", "#F8A19F", "#325A9B", "#85660D", 
+                    "#B10DA1", "#FC1CBF", "#C075A6", "#782AB6", "#1C7F93", "#683B79", "#993F00"), levels(annotations_scz2$med))
+
+
+
+
+#write_rds(palette_45, "./rds_objects/palette_45.rds")
+#write_rds(palette_45_2, "./rds_objects/palette_45_2.rds")
+#write_rds(high.pal, "./rds_objects/high.pal.rds")
+#write_rds(med.pal, "./med.pal.rds")
+
+```
+
+
+#Some variables
+
+```{r}
+msub_order <- c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+  
+hsub_order <- c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+
+
+
+msub_ranks <- factor(msub_order, levels = msub_order) %>% as.integer() %>% setNames(msub_order)
+
+
+
+hsub_ranks <- factor(hsub_order, levels = hsub_order) %>% as.integer() %>% setNames(hsub_order)
+
+
+#write_rds(msub_order, "./rds_objects/msub_order.rds")
+#write_rds(hsub_order, "./rds_objects/hsub_order.rds")
+
+
+
+```
+
+
+
+
+
+# Load data
+## Our schizo data
+```{r tidy=TRUE}
+con_scz <- read_rds("~/projects/human_schizo/MB6-MB23/2ndary/con.rds")
+
+annotations_scz <- read_rds("~/projects/human_schizo/MB6-MB23/2ndary/tans.rds")
+
+#make into factor
+
+annotations_scz <- lapply(annotations_scz, as.factor)
+```
+
+
+## New annotation Peter 04.2020 + scrublet scores + extended other group
+
+
+```{r}
+annotations_scz3 <- read_rds("~/projects/human_schizo/MB6-MB23/2ndary/tans_PETER_extra_filt_April_2020.rds")
+
+scrubletf <- read_rds("~/projects/human_schizo/MB6-MB23/2ndary/scrubletf.rds")
+
+other_extended <- read_rds("~/projects/human_schizo/MB6-MB23/2ndary/other_extensive_PETER_APRIL_2020.rds")
+
+```
+
+
+
+
+# Modify schizo annotation, capitalize gene names, rename 2 subtypes, Apply extra filters - PETER APRIL 2020
+
+
+
+```{r}
+
+
+annotations_scz2 <- annotations_scz
+length(annotations_scz$med)
+
+
+
+
+annotations_scz2$high %<>% gsub("Pvalb_Nos1", "Pvalb_Sst", .) %>% gsub("L5_6_Fezf2_Lrrk1", "L4_5_Fezf2_Lrrk1", .) %>% toupper() %>%
+  gsub("GLIA", "Glia", .) %>% gsub("OTHER", "Other", .) %>% setNames(names(annotations_scz2$high))
+
+annotations_scz2$med %<>% gsub("L5_6_Fezf2_Lrrk1", "L4_5_Fezf2_Lrrk1", .) %>% toupper() %>%
+  gsub("GLIA", "Glia", .) %>% gsub("OTHER", "Other", .) %>% setNames(names(annotations_scz2$med))
+
+#Extra "Other" cells
+
+annotations_scz2$high[names(annotations_scz2$high) %in% other_extended[[1]]$cells] <- "Other"
+annotations_scz2$med[names(annotations_scz2$med) %in% other_extended[[1]]$cells] <- "Other"
+
+
+#More stringent scrublet filter 0.25
+
+annotations_scz2$high <- annotations_scz2$high[!names(annotations_scz2$high) %in% names(scrubletf)[scrubletf > 0.25]]
+
+annotations_scz2$med <- annotations_scz2$med[!names(annotations_scz2$med) %in% names(scrubletf)[scrubletf > 0.25]]
+
+
+
+
+#Found inconsistency in naming of L2_CUX2_FREM3 and L2_CUX2_PRSS12 between med and high resolution subtypes
+
+annotations_scz2$med %<>% gsub("L2_CUX2_FREM3", "L2_3_CUX2_FREM3", .) %>% gsub("L2_CUX2_PRSS12", "L3_CUX2_PRSS12", .) %>%
+  setNames(names(annotations_scz2$med))
+
+
+
+
+#add annotations without Other:
+
+annotations_scz2$high.clean <- annotations_scz2$high[!grepl("Other",annotations_scz2$high)]
+annotations_scz2$med.clean <- annotations_scz2$med[!grepl("Other",annotations_scz2$med)]
+
+
+
+#make as factor
+
+annotations_scz2 <- lapply(annotations_scz2, as.factor)
+
+
+
+#write_rds(annotations_scz2, "./rds_objects/annotations_scz2.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Allen 2019 human data, smart-seq4
+**https://transcriptomic-viewer-downloads.s3-us-west-2.amazonaws.com/human/transcriptome.zip**
+```{r}
+#assign variable to tome file
+allen_tome <- "~/projects/human_schizo/MB6-MB23/2ndary/Allen_31.01.2020/transcrip.tome"
+
+#load data from tome file
+allen_exon <- read_tome_dgCMatrix(tome = allen_tome, target = "data/t_exon")
+allen_intron <- read_tome_dgCMatrix(tome = allen_tome, target = "data/t_intron")
+
+#load sample and gene names
+allen_smpl_names <- read_tome_sample_names(tome = allen_tome)
+allen_gene_names <- read_tome_gene_names(tome = allen_tome)
+
+#sum up introns + exons:
+allen_cm <- allen_exon + allen_intron
+
+#add colnames and rownames to matrix
+rownames(x = allen_cm) <- allen_gene_names
+colnames(x = allen_cm) <- allen_smpl_names
+
+#load Allen annotation
+annotation_allen <- fread(file = "~/projects/human_schizo/MB6-MB23/2ndary/Allen_31.01.2020/sample_annotations.csv")
+
+```
+
+
+### Verify Allen 2019 annotation data.frame overlap with count table annotations
+
+
+```{r}
+all(
+  annotation_allen$sample_name == colnames(allen_cm)
+)
+```
+
+
+
+
+
+
+
+# Our SCZ data
+
+
+## Check best samples for label propagation
+
+```{r, fig.width=15, fig.height=13, warning=F, message=F}
+#highlight individual samples to verify distribution of cells across subtypes
+
+
+grid.arrange(grobs =
+
+   lapply(
+     levels(con_scz$getDatasetPerCell()), function(x)
+          con_scz$plotGraph(
+                  groups = con_scz$getDatasetPerCell(), 
+                  subgroups = x, 
+                  #plot.na=T,
+                  #color.by = annotations_scz$high,
+                  mark.groups = T,
+                  size = 0.3, alpha = 0.1, keep.limits = T) +
+       scale_color_grey()
+       ),
+ ncol = 5)
+```
+
+
+
+
+
+
+
+```{r, fig.width=7, fig.height=7}
+
+#par(mfrow = c(2,3))
+con_scz$plotPanel(font.size = 2)
+```
+
+## Check which samples have the best representation of subtypes
+
+
+```{r}
+scz_coverage <- data.frame(
+  samples = names(annotations_scz$high) %>% sub("_[A-Z]+-[1-9]", "", .),
+  subtypes = factor(annotations_scz$high, levels = annotations_scz$high %>% unique(), ordered =T)
+)
+
+```
+
+
+```{r, fig.height=7, fig.width=9}
+
+#Unique sample names
+unique(scz_coverage$samples) %>% as.vector()
+
+#Amount of detected subtypes per sample
+sapply(X = unique(scz_coverage$samples), FUN = function(x) {
+  scz_coverage$subtypes[scz_coverage$samples %in% x] %>% unique() %>% length()
+}
+)
+
+#plot amount of subtypes per sample
+ggplot(data = data.frame(
+  samples = unique(scz_coverage$samples) %>% as.vector(),
+  fraction_of_detected_subtypes = 
+    sapply(X = unique(scz_coverage$samples), FUN = function(x) {
+      scz_coverage$subtypes[scz_coverage$samples %in% x] %>% unique() %>% length() / 
+        scz_coverage$subtype %>% unique() %>% length()
+    }
+    )
+), aes(x = samples, y = fraction_of_detected_subtypes, fill = samples)
+)+
+  geom_col(show.legend = F) +
+  theme_classic()
+
+
+
+#amount of cells per sample
+unique(scz_coverage$samples) %>% as.vector()
+sapply(X = unique(scz_coverage$samples), FUN = function(x) {row.names(
+   scz_coverage[scz_coverage$samples %in% x, ]
+ ) %>% length()
+ }
+ )
+
+
+#plot amount of cells per sample
+ggplot(data = data.frame(
+  samples = unique(scz_coverage$samples) %>% as.vector(),
+  amount_of_cells = 
+    sapply(X = unique(scz_coverage$samples), FUN = function(x) {row.names(
+   scz_coverage[scz_coverage$samples %in% x, ]
+ ) %>% length()
+ }
+ )
+ ), aes(x = samples, y = amount_of_cells, fill = samples)
+) +
+  geom_col(show.legend = F) +
+  theme_classic()
+  
+
+
+```
+
+```{r, fig.width=22, fig.height=30}
+#Plot distribution of cell types whithin samples
+
+
+
+plot.list <- lapply(X = unique(scz_coverage$samples), function(x) {
+  scz_coverage[scz_coverage$samples %in% x, ] %>%
+  
+    ggplot(aes(x = subtypes, fill = subtypes))+
+    geom_bar(show.legend = F) +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), plot.title = element_text(hjust = 0.5)) +
+    labs(title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list, ncol = 3,)
+```
+
+
+
+
+
+**CONCLUSION: use MB14 MB15 MB17 for alignment with Allen data**
+
+
+
+
+
+
+
+# Realign our schizo data to Allen genome/gtf for the best alignment between datasets.
+
+**Genome: https://www.ncbi.nlm.nih.gov/assembly/GCF_000001405.28/**
+**took fasta from there - USE RefSeq fasta GCF**
+
+**.gtf: http://celltypes.brain-map.org/api/v2/well_known_file_download/502175284**
+
+
+
+
+**HAD TO MODIFY ALLEN SUPPLIED GTF
+
+**THIS GTF IS ACTUALLY GFF WITH WRONG FIELDS**
+
+**USED GFFREAD AND SED TO MAKE NEW GTF**
+
+```{r}
+
+
+
+
+
+
+
+## Prepare named list of count matrixes
+
+Our scz data
+```{r}
+
+#Import Scz datasets re-mapped with Allen genome and give names to the elements
+cms_scz_AlGen <- c("MB14", "MB15", "MB17") %>%
+  lapply(function(sn){
+    pagoda2::read.10x.matrices(
+      paste0(
+        "../../counts_Allen_Genome/MB14_MB15_MB17_proper_gtf/", sn,
+        "/outs/filtered_feature_bc_matrix/"
+        )
+    )
+  }
+  )  %>% setNames(., c("MB14", "MB15", "MB17"))
+  
+
+#rename nuclei names in matrix, prepend with sample name intead of "one"
+
+cms_scz_AlGen <-
+  names(cms_scz_AlGen) %>%
+    lapply(
+     function(sn2) {
+       gsub('one', sn2, colnames(
+                       parse(text = paste0("cms_scz_AlGen$",sn2)) %>% eval()
+                         
+      
+        )
+     ) %>% set_colnames(
+       parse(text = paste0("cms_scz_AlGen$",sn2)) %>% eval(), .
+       )
+     }
+   ) %>% setNames(., names(cms_scz_AlGen))
+
+
+#Filter out cells in scz samples discarded in initial scz analysis (doublets, etc)!!!!! CORRECTION: cells were filtered by PETER APRIL 2020. NEW FILTER 
+
+cms_scz_AlGen %<>% lapply(function(smpl) {
+  smpl[, colnames(smpl) %in% names(annotations_scz2$high)]
+    }
+  )  %>% setNames(names(cms_scz_AlGen))
+
+str(cms_scz_AlGen)
+
+
+
+```
+
+Allen data
+```{r}
+#Split Allen 2018 datset by donor id and add into new list
+allen_list_2019 <- lapply(annotation_allen$external_donor_name_label %>% unique(), 
+                     function(x) 
+                       allen_cm[ ,annotation_allen$external_donor_name_label == x &
+                                  annotation_allen$region_label == "CgG"]
+
+) %>% setNames(annotation_allen$external_donor_name_label %>% unique())
+
+str(allen_list_2019)
+
+
+#Combine 2 lists together
+
+
+cms_new <- append(cms_scz_AlGen, allen_list_2019)
+
+str(cms_new)
+
+
+```
+
+
+
+## Pagoda2 object list
+
+
+```{r}
+
+p2.list.new <- lapply(cms_new, basicP2proc, n.cores = 30, n.odgenes = 3000, min.cells.per.gene = 0,
+                  min.transcripts.per.cell = 0, get.largevis = F, get.tsne = T, make.geneknn = F
+)
+
+#get.tsne is needed for downstreat visualization of panel of local clusters
+```
+
+## New conos remapped scz data with Allen genome + Allen 2019 ACC dataset
+
+```{r}
+#new conos
+
+con_new <- Conos$new(p2.list.new,n.cores = 30)
+```
+
+
+
+## KNN graph
+```{r}
+#build knn graph
+
+con_new$buildGraph(k = 30, k.self = 5, 
+               space = "PCA",
+               ncomps = 30, n.odgenes = 3000, matching.method = "mNN", metric = "angular",
+               score.component.variance = T, verbose = T, 
+               alignment.strength = 0.1,
+               
+               balancing.factor.per.cell = setNames(
+                        con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>% gsub("^H200.*", "ALLEN", .),
+                        names(con_new$getDatasetPerCell())
+                        ),
+               same.factor.downweight = 0.1,                              
+                                        
+
+)
+
+
+
+```
+
+## Plot PCA
+```{r}
+#score.component.variance=TRUE estimates amount of variance explained by each PCA
+plotComponentVariance(con_new, space = "PCA")
+```
+
+
+
+## Make UMAP embedding
+
+```{r}
+con_new$embedGraph(method = 'UMAP', min.dist = 0.1, spread = 10, n.cores = 40, min.prob.lower = 1e-7)
+
+```
+
+
+## SAVE ACC+SCHIZO RDS CONOS
+
+```{r}
+#write_rds(con_new, "./rds_objects/acc_schizo.con.rds", compress = "gz")
+```
+
+
+
+
+
+## Plot graph with sample origin highlighted
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin no force alignment
+
+
+#graph.origin.noforce.new <- con_new$plotGraph(groups =
+#                          setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.noforce.new
+```
+
+## Plot graph with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin no force alignment
+
+
+#graph.origin.noforce.new.newfilt <- con_new$plotGraph(groups =
+#                          setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.noforce.new.newfilt
+```
+
+## Graph Al 0.1  with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin Al 0.1
+
+
+#graph.origin.al0.1.new.newfilt <- con_new$plotGraph(groups =
+#                          setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.al0.1.new.newfilt
+```
+
+## Graph Al 0.2  with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin Al 0.2
+
+
+#graph.origin.al0.2.new.newfilt <- con_new$plotGraph(groups =
+#                          setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.al0.2.new.newfilt
+```
+
+## Graph Down 0.1  with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin Down 0.1
+
+
+#graph.origin.down0.1.new.newfilt <- con_new$plotGraph(groups =
+#                          setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.down0.1.new.newfilt
+```
+
+## Graph Down 0.01  with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin Down 0.01
+
+
+#graph.origin.down0.01.new.newfilt <- con_new$plotGraph(groups =
+#                          setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.down0.01.new.newfilt
+```
+
+## Graph Al 0.1 Down 0.1 with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin Al 0.1 Down 0.1
+
+
+graph.origin.al0.1.down0.1.new.newfilt <- con_new$plotGraph(groups =
+                          setNames(
+                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_new$getDatasetPerCell())
+                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+)
+
+graph.origin.al0.1.down0.1.new.newfilt
+```
+
+
+
+## Graph Al 0.2 Down 0.1 with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin Al 0.2 Down 0.1
+
+
+#graph.origin.al0.2.down0.1.new.newfilt <- con_new$plotGraph(groups =
+#                          setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.al0.2.down0.1.new.newfilt
+```
+
+
+## Graph Al 0.1 Down 0.01 with sample origin highlighted NEW CONOS AFTER NEW FILTER PETER APRIL 2020
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin Al 0.1 Down 0.01
+
+
+#graph.origin.al0.1.down0.01.new.newfilt <- con_new$plotGraph(groups =
+ #                         setNames(
+#                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_new$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.origin.al0.1.down0.01.new.newfilt
+```
+
+
+## Compare forced alignment conditions
+
+```{r fig.width = 17, fig.height = 27}
+  (graph.origin.noforce.new.newfilt + labs(title = "No Force") | graph.origin.al0.1.new.newfilt + labs(title = "Align 0.1")) /
+  (graph.origin.al0.2.new.newfilt + labs(title = "Align 0.2") | graph.origin.down0.1.new.newfilt + labs(title = "Down 0.1")) /
+  (graph.origin.down0.01.new.newfilt + labs(title = "Down 0.01") | graph.origin.al0.1.down0.1.new.newfilt+ labs(title = "Align 0.1 Down 0.1"))  /
+  (graph.origin.al0.2.down0.1.new.newfilt + labs(title = "Align 0.2 Down 0.1") | graph.origin.al0.1.down0.01.new.newfilt + labs(title = "Align 0.1 Down 0.01")) +
+  plot_layout( guides = "collect")
+
+
+
+```
+
+
+**Use align 0.1 down 0.1 condition for further work**
+
+
+## Plot graph with samples highlighted
+
+```{r fig.width=10, fig.height=8}
+graph.by.sample <- 
+  con_new$plotGraph(color.by = 'sample', mark.groups = F, show.legend = T,
+                  alpha = 0.1, size = 0.6)
+
+graph.by.sample
+```
+
+
+## Plot graph with schizo subtypes highlighted before label propagation
+
+```{r fig.width=10, fig.height=8}
+#Allen subtypes
+
+graph.allen.labs <-
+  con_new$plotGraph(groups = setNames(annotation_allen$cluster_label[annotation_allen$region_label == "CgG"], 
+                        annotation_allen$sample_name[annotation_allen$region_label == "CgG"]),
+                    alpha = 0.1, size = 0.6,
+                    font.size = 2.5, plot.na = F)# +
+    #scale_color_manual(values = palette_45)
+
+graph.allen.labs
+```
+
+really a lot of those, will be very hard to corss-check clusters between our and Allen labeling. Easier to highlight marker genes to do sanity check
+
+
+
+```{r}
+df.correspond.hres.acc
+```
+
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#high resolution
+
+graph.high.res.nopropag <-
+  con_new$plotGraph(groups = annotations_scz2$high, alpha = 0.1, size = 0.6,
+                    font.size = 4) +
+    scale_color_manual(values = high.pal)
+
+graph.high.res.nopropag
+```
+
+```{r fig.width=10, fig.height=8}
+#mid resolution
+
+graph.mid.res.nopropag <-
+  con_new$plotGraph(groups = annotations_scz2$med, alpha = 0.1, size = 0.6, font.size = 4) +
+    scale_color_manual(values = med.pal)
+
+graph.mid.res.nopropag
+```
+
+
+
+
+
+
+
+
+## Plot separate samples with common embedding before label propagation
+
+```{r fig.width=10, fig.height=7, warning=F, message=F}
+plot.samples.common.embed <-
+ 
+  con_new$plotPanel(size = 0.3, alpha = 0.5, keep.limits = T, use.common.embedding = T, groups = annotations_scz2$high, ncol = 3, mark.groups = F)
+
+plot.samples.common.embed
+
+
+
+
+```
+
+
+
+
+# Label propagation high res
+
+```{r}
+#propage label, high resolution
+annot_tranfer_info_highres <-
+  con_new$propagateLabels(labels = annotations_scz2$high, verbose = T)
+
+
+str(annot_tranfer_info_highres)
+```
+
+
+## REMOVE LABELS OF SEVERAL OPCs CELLS THAT APPEAR AS OTHER CELL TYPES (VIP) - BASED ON LATER ANALYSIS
+
+```{r}
+#BACKUP ORIGINAL TRANSFERED LABELS
+#annot_tranfer_acc_highres.BAK <- annot_tranfer_info_highres
+#annot_tranfer_acc_midres.BAK <- annot_tranfer_info_midres
+
+annot_tranfer_info_highres <- annot_tranfer_acc_highres.BAK
+annot_tranfer_info_midres <- annot_tranfer_acc_midres.BAK
+
+
+#REMOVE ABBERANTLY ASSIGNED CELLS
+
+#make vector with names of cells to be removed
+acc_remove_cells_hres <-
+    annot_tranfer_info_highres$labels[
+      con_allen$clusters$leiden$groups[con_allen$clusters$leiden$groups == "17"] %>% names] %>%
+    grepl("Glia|Other", .) %>% {!.} %>% (con_allen$clusters$leiden$groups[con_allen$clusters$leiden$groups == "17"] %>% names)[.]
+
+
+
+
+acc_remove_cells_midres <-
+    annot_tranfer_info_midres$labels[
+      con_allen$clusters$leiden$groups[con_allen$clusters$leiden$groups == "17"] %>% names] %>%
+    grepl("Glia|Other", .) %>% {!.} %>% (con_allen$clusters$leiden$groups[con_allen$clusters$leiden$groups == "17"] %>% names)[.]
+
+
+
+
+
+
+#remove cells from hres annotation transfer
+annot_tranfer_info_highres$labels <- annot_tranfer_info_highres$labels[! names(annot_tranfer_info_highres$labels) %in% acc_remove_cells_hres]
+
+annot_tranfer_info_highres$label.distribution <- annot_tranfer_info_highres$label.distribution[! rownames(annot_tranfer_info_highres$label.distribution) %in%
+                                                                                               acc_remove_cells_hres, ]
+
+annot_tranfer_info_highres$uncertainty <- annot_tranfer_info_highres$uncertainty[! names(annot_tranfer_info_highres$uncertainty) %in% acc_remove_cells_hres]
+
+
+
+#remove cells from midres annotation transfer
+annot_tranfer_info_midres$labels <- annot_tranfer_info_midres$labels[! names(annot_tranfer_info_midres$labels) %in% acc_remove_cells_midres]
+
+annot_tranfer_info_midres$label.distribution <- annot_tranfer_info_midres$label.distribution[! rownames(annot_tranfer_info_midres$label.distribution) %in%
+                                                                                               acc_remove_cells_midres, ]
+
+annot_tranfer_info_midres$uncertainty <- annot_tranfer_info_midres$uncertainty[! names(annot_tranfer_info_midres$uncertainty) %in% acc_remove_cells_midres]
+
+
+
+
+```
+
+
+## RENAME MED RES SUBTYPES in annotation transfer info
+```{r}
+annot_tranfer_info_midres$labels %<>% gsub("L2_CUX2_FREM3", "L2_3_CUX2_FREM3", .) %>% gsub("L2_CUX2_PRSS12", "L3_CUX2_PRSS12", .)
+
+colnames(annot_tranfer_info_midres$label.distribution) %<>% gsub("L2_CUX2_FREM3", "L2_3_CUX2_FREM3", .) %>% gsub("L2_CUX2_PRSS12", "L3_CUX2_PRSS12", .)
+
+```
+
+
+
+### Verify label removal
+```{r fig.width=12, fig.height=10}
+con_allen$plotGraph(groups = annot_tranfer_info_highres$labels, font.size = 3)
+con_allen$plotGraph(groups = annot_tranfer_info_midres$labels, font.size = 3)
+
+
+```
+
+
+
+
+## Plot panel, transfered labels high res, + Allen annotations
+```{r fig.width=13, fig.height=8}
+#Panel with high resolution transfered lables
+plot.panel.propag.hres <-
+  con_new$plotPanel(size = 0.3, alpha = 0.5, keep.limits = T, use.common.embedding = T, groups = annot_tranfer_info_highres$labels, ncol = 3, font.size = 2)
+
+plot.panel.propag.hres
+
+```
+
+
+
+
+
+
+
+
+
+
+## Plot graph after label propagation
+
+```{r fig.width=10, fig.height=8}
+#high resolution
+
+graph.high.res.prop <-
+  con_new$plotGraph(groups = annot_tranfer_info_highres$labels, alpha = 0.1, size = 0.6,
+                    font.size = 4) +
+    scale_color_manual(values = high.pal)
+
+graph.high.res.prop
+
+
+
+```
+
+
+
+
+## Plot statistics HIGH RES label propagation
+
+```{r fig.width=10, fig.height=7}
+#Plot barplots to show cell origin in different clusters
+
+barplots.transfer.hres <-
+plotClusterBarplots(con_new, groups = 
+                      #con_new$clusters$leiden$groups
+                      as.factor(annot_tranfer_info_highres$labels), 
+                      sample.factor = setNames(
+                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_new$getDatasetPerCell())
+                           )
+                      ) +
+  theme(axis.text = element_text(angle = 90))
+
+
+
+barplots.transfer.hres 
+ggsave("barplots.transfer.hres.pdf", barplots.transfer.hres, width = 60, height = 7, 
+       limitsize = F)
+
+```
+
+
+```{r fig.width=8, fig.height=5}
+#Plot distribution of cells manually, impossible to fix horizontal x axis text
+
+transf.hres.df1 <- data.frame(clusters = annot_tranfer_info_highres$labels,
+                             origin = con_new$getDatasetPerCell()[names(annot_tranfer_info_highres$labels)] %>% 
+                               gsub("^MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .)
+                             )
+
+
+
+
+
+ggplot(data = transf.hres.df1, aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+#another way of doing things
+transf.hres.df2 <-
+   transf.hres.df1 %>% group_by(clusters, origin) %>%
+       summarise(count = n()) %>% mutate(percentage = count/sum(count) * 100)
+
+
+
+ggplot(data = transf.hres.df2, aes(x = clusters, y = percentage)) +
+  geom_col(aes(fill = origin), position = "stack") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+
+
+
+
+```
+
+
+
+### Amount Allen cells, HIGH RES propagation
+
+
+```{r fig.width=8, fig.heigth=6}
+
+ggplot(data = transf.hres.df1[transf.hres.df1$origin == "ALLEN",], aes(x = clusters)) +
+  geom_bar() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "# Allen cells")
+
+
+transf.hres.df1 %>% filter(origin == "ALLEN") %>% group_by(clusters) %>%  summarize(n = n()) %>%
+  print()
+
+
+```
+
+
+L2_3_Cux2_Frem3_Sv2c (22), Sst_Npy (3), Sst_Th (6), PVALB_CRH (21) have the lowest amount of cells!!!!
+
+
+### Plot uncertainty and probability HIGH RES
+
+```{r fig.width=12, fig.height=5}
+#plot panel with uncertainty highlighted
+
+con_new$plotPanel(colors = annot_tranfer_info_highres$uncertainty, 
+                  show.legend = T, legend.title="Uncertainty", plot.na = F)
+```
+
+
+
+```{r fig.width=10, fig.height=6}
+#Plot uncertainty subtype by subtype
+
+#check if nuclei order is same in all elements of annot_tranfer_info_highres
+(annot_tranfer_info_highres$labels %>% names() == 
+  annot_tranfer_info_highres$uncertainty %>% names()) %>% all()
+
+(annot_tranfer_info_highres$labels %>% names() == 
+  annot_tranfer_info_highres$label.distribution %>% names()) %>% all()
+
+#Indeed order of elements is the same
+
+
+uncert.hres.df <-
+  annot_tranfer_info_highres$uncertainty %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_highres$uncertainty[.] %>%
+    data.frame(uncertainty = .)
+
+uncert.hres.df$clusters <-
+annot_tranfer_info_highres$labels %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_highres$labels[.] %>% factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other"))
+
+
+
+uncert.hres.df
+
+plot.uncert.hres <-
+  ggplot(uncert.hres.df, aes(clusters, uncertainty, color = clusters)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+    coord_cartesian(ylim = c(-0.08, 1)) +
+   scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "Uncertainty of high resolution subtypes, ACC estimate", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+  
+plot.uncert.hres  
+
+
+
+```
+
+
+
+
+```{r fig.width=10, fig.height=6}
+#Plot probability of each nuclei to belong to a specific cluster
+
+
+#select Allen cells
+probab.hres.df <-
+  annot_tranfer_info_highres$label.distribution %>% rownames() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_highres$label.distribution[.,]  %>% as.data.frame()
+
+
+#add cluster names
+probab.hres.df$cluster <-
+  annot_tranfer_info_highres$labels %>% names() %>% 
+  grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_highres$labels[.] %>% factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other"))
+  
+  
+#get probability of nucleus belonging to a certain cluster
+probab.hres.df$cluster_probability <-
+  probab.hres.df %>%
+    apply(., 1, function(x) {x[colnames(.) == x["cluster"]]}) %>% as.numeric()
+
+#also other option also possible
+#probab.hres.df %>%
+#    apply(., 1, function(x) {x[names(x) == x["cluster"]]})
+
+
+
+
+#plot probability of nuclei belonging to clusters
+
+plot.probab.hres <-
+  ggplot(probab.hres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "Probability of high resolution subtype, ACC estimate", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+  
+plot.probab.hres  
+
+
+
+
+
+
+```
+
+
+
+
+
+
+# Conos Allen ACC separate from Schizo - for visualization reasons to ease gene expression highlighting etc on one plot
+
+
+```{r}
+
+p2.list.allen <- lapply(allen_list_2019, basicP2proc, n.cores = 30, n.odgenes = 3000, min.cells.per.gene = 0,
+                  min.transcripts.per.cell = 0, get.largevis = F, get.tsne = T, make.geneknn = F
+)
+
+#get.tsne is needed for downstreat visualization of panel of local clusters
+
+
+```
+
+## Create Allen ACC conos
+
+```{r}
+#new conos
+
+con_allen <- Conos$new(p2.list.allen,n.cores = 30)
+```
+
+
+
+## KNN graph Allen ACC conos
+```{r}
+#build knn graph
+
+con_allen$buildGraph(k = 30, k.self = 5, 
+               space = "PCA",
+               ncomps = 30, n.odgenes = 3000, matching.method = "mNN", metric = "angular",
+               score.component.variance = T, verbose = T
+)
+```
+
+```{r}
+#score.component.variance=TRUE estimates amount of variance explained by each PCA
+plotComponentVariance(con_allen, space = "PCA")
+```
+
+
+
+## Make UMAP embedding Allen conos
+
+```{r}
+con_allen$embedGraph(method = 'UMAP', min.dist = 0.1, spread = 10, n.cores = 30, min.prob.lower = 1e-7)
+
+```
+
+
+## RUN LEIDEN clustering - to exclude some OPCs missassigned by label transfer as VIP
+
+```{r}
+con_allen$findCommunities(method = leiden.community, resolution = 1
+ 
+  )
+
+con_allen$plotGraph(#clustering = "leiden"
+  groups = con_allen$clusters$leiden$groups#[con_allen_mtg$clusters$leiden$groups == "17"]
+  )
+
+
+```
+
+
+
+
+## Save ACC ALLEN ONLY conos + transfered labels
+
+```{r}
+write_rds(con_allen, "./rds_objects/acc_allen_only.con.rds", compress = "gz")
+write_rds(annot_tranfer_info_highres, "./rds_objects/acc_high_transf_annotations.rds")
+write_rds(annot_tranfer_info_midres, "./rds_objects/acc_mid_transf_annotations.rds")
+```
+
+
+
+
+## Plot statistics HIGH RES label propagation
+
+```{r fig.width=10, fig.height=7}
+#Plot barplots to show cell origin in different clusters
+
+barplots.allen.hres <-
+plotClusterBarplots(con_allen, groups = as.factor(annot_tranfer_info_highres$labels)) +
+  theme(axis.text = element_text(angle = 90))
+
+
+
+barplots.allen.hres 
+#ggsave("barplots.transfer.hres.pdf", barplots.transfer.hres, width = 60, height = 7, 
+#       limitsize = F)
+
+```
+
+
+```{r fig.width=8, fig.height=5}
+#Plot distribution of cells manually
+
+ggplot(data = data.frame(clusters = annot_tranfer_info_highres$labels[
+                               names(con_allen$getDatasetPerCell())],
+                             origin = con_allen$getDatasetPerCell()
+                             ),
+       aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+
+```
+
+
+## Plot Allen graph with samples highlighted
+
+```{r fig.width=8, fig.height=6}
+graph.by.sample.allen <- 
+  con_allen$plotGraph(color.by = 'sample', mark.groups = F, show.legend = T,
+                  alpha = 0.1, size = 1)
+
+graph.by.sample.allen
+```
+
+## Graph HIGH RES transfered labels
+```{r fig.width=12, fig.height=10}
+#high resolution Transfered labels
+
+graph.high.res.allen <-
+  con_allen$plotGraph(groups = annot_tranfer_info_highres$labels, alpha = 0.3, size = 1,
+                    font.size = 3, show.legend = T, legend.pos = "bottom") +
+    scale_color_manual(values = high.pal)
+
+graph.high.res.allen
+
+
+```
+
+## Graph MID RES transfered labels
+```{r fig.width=12, fig.height=10}
+#high resolution Transfered labels
+
+#graph.mid.res.allen <-
+  con_allen$plotGraph(groups = annot_tranfer_info_midres$labels, alpha = 0.3, size = 1,
+                    font.size = 3, show.legend = T, legend.pos = "bottom") +
+    scale_color_manual(values = med.pal)
+
+#graph.mid.res.allen
+
+#ggsave("graph.mid.res.allen.pdf", graph.mid.res.allen, width = 8, height = 6)
+```
+
+
+
+
+**!!!!!PLOT MARKERS IN SEPARATE R-STUDIO PROJECT - TO VERIFY LABEL PROPAGATION WITH MARKER GENES ON SEPARATE DATASET CELL CLUSTERS**
+## Plot marker genes
+
+```{r fig.width=8, fig.height=8}
+#Astrocytes
+plot.list.Allen.ast <- lapply(X = c("GFAP", "AQP4", "SLC1A3", "SLC1A2", "GJB6", "GLUL", "FGFR3", 
+                                "ALDH1L1", "S100B", "ATP1B2"), function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.ast, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+```{r fig.width=8, fig.height=6}
+#Oligos
+plot.list.Allen.olig <- lapply(X = c("MBP", "MOG", "MAG", "SOX10", "CNDP1", "OPALIN","MOBP"), function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.olig, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+```{r fig.width=8, fig.height=6}
+#OPCs
+plot.list.Allen.opc <- lapply(X = c("CSPG4", "PDGFRA", "OLIG1", "OLIG2", "SOX10", "CSPG5", "PCDH15"),
+                               function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.opc, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=4}
+#Microglia
+plot.list.Allen.u <- lapply(X = c("CX3CR1", "AIF1", "ITGAM", "CD68", "C3"),
+                               function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.u, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=20}
+#Endothelial
+plot.list.Allen.end <- lapply(X = c("FLT1", "CD34", "PECAM1", "ICAM2", "TIE1", "CDH5", "CLDN5", "ADGRF5", "EMCN", "APLN", "CD82", "CHST1", "APOD", "VTN", "ATP13A5", "PTH1R", "TAGLN", "BMX", "LUM", "IL33", "CD93", "CLEC1A", "SLC16A1", "ITIH5", 
+  "CXCL12"),
+                               function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.end, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=12}
+#Pericyte
+plot.list.Allen.peri <- lapply(X = c("EMCN", "VTN", "CSPG4", "ATP13A5", "PTH1R", "KCNJ8", "ABCC9", "APLN", "CD82", "CHST1", "CLDN5", "ADGRF5", 
+  "APOD", "IFITM1", "CASQ2"),
+                               function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.peri, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=15}
+#Neurons general
+plot.list.Allen.neur <- lapply(X = c("SNAP25", "CELF4", "RBFOX3","SYT1", "SYP", "ROBO2", "SCN2A", "MEG3",
+                                     "CAMK4", "GABRA1", 
+                                     "SYNPR", "SCG2", "GAD1", "SLC32A1", "GABRB2", "CHGB",
+                                     "CCK", "SLC17A7", "SLC17A6",  "SV2B", "TBR1", "CAMK2A", "SATB2", "RORB"),
+                               function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.neur, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+### Plot excitatory
+```{r fig.width=12, fig.height=45}
+#Neurons excitatory markers
+plot.list.Allen.neur.exc <- lapply(X = c("CUX2", "LAMP5", "PDGFD", "MARCH1", "FREM3", "SV2C", "THEMIS", "SEMA3A",
+                                          "FEZF2", "TLE4", "HTR2C", "ADRA1A", "ABO", "UNC5D", "RORB", "SCHLAP1",
+                                          "ARHGAP15", "MET", "LRRK1", "MME", "PRSS12", "SCUBE1", "NTNG2"),
+                               function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.neur.exc, ncol = 2)
+
+#arrangeGrob(grobs = plot.list.Allen, ncol = 3)
+
+
+```
+
+
+
+
+### Plot inhibitory
+```{r fig.width=12, fig.height=45}
+#Neurons excitatory markers
+plot.list.Allen.neur.inh <- lapply(X = c("PVALB", "CRH", "MEPE", "NOS1", "VIP", "ABI3BP", "RELN", "TYR", "ID2",
+                                         "CRH", "SSTR1", "SEMA3C", "SST", "CALB1", "NMBR", "NCKAP5", "PAX6", "TH",
+                                         "STK32A", "NPY", "TAC3", "LAMP5"),
+                               function(x) {
+  con_allen$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.neur.inh, ncol = 2)
+
+#arrangeGrob(grobs = plot.list.Allen, ncol = 3)
+
+
+```
+**HIGH RES**
+**Conclusion: in general transfer looks OK
+
+
+
+**MID RES**
+**Conclusion: transfer looks good**
+
+**General for both: part of OPCs in Allen data were assigned as VIP neurons - need to remove those OPCs from analysis**
+
+
+
+
+# LAYER MAP ACC, HIGH RESOL
+
+
+```{r, fig.width=12, fig.heigth=8}
+
+
+ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_info_highres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_info_highres$labels)]
+            ] %>% factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_info_highres$labels)] %>%
+            factor(levels = c("L6", "L5b", "L5a", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.45, alpha = 0.7, size = 0.7, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 14), plot.title = element_text(hjust = 0.5, size = 14),
+        axis.text.y = element_text(size = 14), axis.title = element_text(size = 14),
+        text = element_text(family = "Helvetica"), axis.title.x = element_blank()) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 0.6, colour = "grey") +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]
+                     ) +
+  labs(title = "Layer distribution, ACC, high resolution")
+
+
+
+ 
+
+
+```
+
+
+
+
+
+# Label propagation mid res
+
+```{r}
+#propage label, high resolution
+annot_tranfer_info_midres <-
+  con_new$propagateLabels(labels = annotations_scz2$med, verbose = T)
+
+
+str(annot_tranfer_info_midres)
+```
+
+## Plot graph mid res after label propagation
+
+```{r fig.width=10, fig.height=8}
+#high resolution
+
+graph.mid.res.prop <-
+  con_new$plotGraph(groups = annot_tranfer_info_midres$labels, alpha = 0.1, size = 0.6,
+                    font.size = 4) +
+    scale_color_manual(values = med.pal)
+
+graph.mid.res.prop
+
+
+
+```
+
+
+## Plot statistics MID RES label propagation
+
+```{r fig.width=10, fig.height=7}
+#Plot barplots to show cell origin in different clusters
+
+barplots.transfer.mres <-
+plotClusterBarplots(con_new, groups = 
+                      #con_new$clusters$leiden$groups
+                      as.factor(annot_tranfer_info_midres$labels), 
+                      sample.factor = setNames(
+                             con_new$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_new$getDatasetPerCell())
+                           )
+                      ) +
+  theme(axis.text = element_text(angle = 90))
+
+
+
+barplots.transfer.mres 
+#ggsave("barplots.transfer.hres.pdf", barplots.transfer.hres, width = 60, height = 7, 
+#       limitsize = F)
+
+```
+
+
+```{r fig.width=8, fig.height=5}
+#Plot distribution of cells manually, impossible to fix horizontal x axis text
+
+transf.mres.df <- data.frame(clusters = annot_tranfer_info_midres$labels,
+                             origin = con_new$getDatasetPerCell()[names(annot_tranfer_info_midres$labels)] %>% 
+                               gsub("^MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .)
+                             )
+
+
+
+
+
+ggplot(data = transf.mres.df, aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+
+```
+
+
+### Amount Allen cells, MID RES propagation
+
+
+```{r fig.width=8, fig.heigth=6}
+
+ggplot(data = transf.mres.df[transf.mres.df$origin == "ALLEN",], aes(x = clusters)) +
+  geom_bar() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "# Allen cells")
+
+
+transf.mres.df %>% filter(origin == "ALLEN") %>% group_by(clusters) %>%  summarize(n = n()) %>%
+  print()
+
+
+```
+
+### Plot uncertainty and probability MID RES
+
+```{r fig.width=12, fig.height=5}
+#plot panel with uncertainty highlighted
+
+con_new$plotPanel(colors = annot_tranfer_info_midres$uncertainty, 
+                  show.legend = T, legend.title="Uncertainty", plot.na = F)
+```
+
+
+
+```{r fig.width=10, fig.height=4}
+#Plot uncertainty subtype by subtype
+
+#check if nuclei order is same in all elements of annot_tranfer_info_highres
+(annot_tranfer_info_midres$labels %>% names() == 
+  annot_tranfer_info_midres$uncertainty %>% names()) %>% all()
+
+(annot_tranfer_info_midres$labels %>% names() == 
+  annot_tranfer_info_midres$label.distribution %>% names()) %>% all()
+
+#Indeed order of elements is the same
+
+
+uncert.mres.df <-
+  annot_tranfer_info_midres$uncertainty %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_midres$uncertainty[.] %>%
+    data.frame(uncertainty = .)
+
+uncert.mres.df$clusters <-
+annot_tranfer_info_midres$labels %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_midres$labels[.] %>%  factor(levels = 
+           c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+         )
+
+
+
+plot.uncert.mres <-
+  ggplot(uncert.mres.df, aes(clusters, uncertainty, color = clusters)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+    coord_cartesian(ylim = c(-0.08, 1)) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Uncertainty of medium resolution subtypes, ACC estimate", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+
+
+plot.uncert.mres  
+```
+
+
+
+
+
+```{r fig.width=10, fig.height=4}
+#Plot probability of each nuclei to belong to a specific cluster
+
+
+#select Allen cells
+probab.mres.df <-
+  annot_tranfer_info_midres$label.distribution %>% rownames() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_midres$label.distribution[.,]  %>% as.data.frame()
+
+
+#add cluster names
+probab.mres.df$cluster <-
+  annot_tranfer_info_midres$labels %>% names() %>% 
+  grepl("^MB", .) %>% {!.} %>% annot_tranfer_info_midres$labels[.] %>% factor(levels = 
+           c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+         )
+  
+  
+#get probability of nucleus belonging to a certain cluster
+probab.mres.df$cluster_probability <-
+  probab.mres.df %>%
+    apply(., 1, function(x) {x[colnames(.) == x["cluster"]]}) %>% as.numeric()
+
+
+
+
+#plot probability of nuclei belonging to clusters
+
+plot.probab.mres <-
+  ggplot(probab.mres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Probability of medium resolution subtypes, ACC estimate", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+ 
+plot.probab.mres  
+
+
+
+
+
+
+
+
+```
+
+
+# LAYER MAP ACC MID RES
+
+
+```{r, fig.width=12, fig.heigth=8}
+
+layers.acc.mres <-
+ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_info_midres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_info_midres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_info_midres$labels)] %>% 
+         factor(levels = c("L6", "L5b", "L5a", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.45, alpha = 0.7, size = 0.7, show.legend = F) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 0.6, colour = "grey") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 14), plot.title = element_text(hjust = 0.5, size = 18),
+        axis.text.y = element_text(size = 14), axis.title = element_text(size = 14),
+        text = element_text(family = "Helvetica"), axis.title.x = element_blank()) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Layer distribution of medium resolution subtypes, ACC estimate")
+
+
+layers.acc.mres
+
+
+```
+
+
+
+
+# MTG Allen data, estimation of layer position in our Schizo data
+
+MTG Allen data
+```{r}
+#Split Allen 2018 datset by donor id and add into new list
+allen_list_2019_mtg <- lapply(annotation_allen$external_donor_name_label %>% unique(), 
+                     function(x) 
+                       allen_cm[ ,annotation_allen$external_donor_name_label == x &
+                                  annotation_allen$region_label == "MTG"]
+
+) %>% setNames(annotation_allen$external_donor_name_label %>% unique())
+
+str(allen_list_2019_mtg)
+
+
+#Combine schizo cms list remapped against allen genome and MTG countmatrixes
+
+
+cms_mtg_schizo <- append(cms_scz_AlGen, allen_list_2019_mtg)
+
+str(cms_mtg_schizo)
+
+
+
+
+
+```
+
+
+
+## Pagoda2 object list, allen 2019 MTG + Schzio
+
+
+```{r}
+
+p2.list.mtg.schizo <- lapply(cms_mtg_schizo, basicP2proc, n.cores = 30, n.odgenes = 3000, min.cells.per.gene = 0,
+                  min.transcripts.per.cell = 0, get.largevis = F, get.tsne = T, make.geneknn = F
+)
+
+#get.tsne is needed for downstreat visualization of panel of local clusters
+```
+
+## Conos, MTG Allen 2019 + remapped scz data with Allen genome
+
+```{r}
+#new conos
+
+con_mtg_schizo <- Conos$new(p2.list.mtg.schizo,n.cores = 30)
+```
+
+
+
+## KNN graph
+```{r}
+#build knn graph
+
+con_mtg_schizo$buildGraph(k = 30, k.self = 5, 
+               space = "PCA",
+               ncomps = 30, n.odgenes = 3000, matching.method = "mNN", metric = "angular",
+               score.component.variance = T, verbose = T, 
+               
+               
+               balancing.factor.per.cell = setNames(
+                        con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>% gsub("^H200.*", "ALLEN", .),
+                        names(con_mtg_schizo$getDatasetPerCell())
+                        ),
+               same.factor.downweight = 0.1,               
+               
+               alignment.strength = 0.2
+)
+```
+
+
+## Make UMAP embedding
+
+```{r}
+con_mtg_schizo$embedGraph(method = 'UMAP', min.dist = 0.1, spread = 10, n.cores = 30, min.prob.lower = 1e-7)
+
+```
+
+## save conos object
+```{r}
+write_rds(con_mtg_schizo, "./rds_objects/mtg_schizo.con.rds", compress = "gz")
+```
+
+
+
+
+## Graph, sample origin highlighted, 
+
+### No forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin no force alignment
+
+
+#graph.mtg.schizo.origin.noforce <- con_mtg_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.noforce
+```
+
+Alignment is not that good. Try forced alignment
+
+### Alignment strength 0.3
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.al0.3 <- con_mtg_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.al0.3
+```
+
+### Alignment strength 0.5
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.al0.5 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                            con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.al0.5
+```
+
+### downweigth 0.1
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.1 <- con_mtg_schizo$plotGraph(groups =
+ #                        setNames(
+#                            con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+ #                            names(con_mtg_schizo$getDatasetPerCell())
+#                          ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.1
+```
+
+### downweigth 0.03
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.03 <- con_mtg_schizo$plotGraph(groups =
+ #                        setNames(
+#                            con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.03
+```
+
+### downweigth 0.01
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.01 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                            con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.01
+```
+
+### downweigth 0.01 align 0.3
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.01.align0.3 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.01.align0.3
+```
+
+### downweigth 0.03 align 0.3
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.03.align0.3 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.03.align0.3
+```
+
+### downweigth 0.03 align 0.1
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.03.align0.1 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.03.align0.1
+```
+
+### downweigth 0.01 align 0.1
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.01.align0.1 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.01.align0.1
+```
+
+### downweigth 0.1 align 0.2
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.1.align0.2 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.1.align0.2
+```
+
+
+
+### downweigth 0.1 align 0.2 NEW FILTER NEW CONOS PETER APRIL 2020
+```{r fig.width=10, fig.height=8}
+
+
+
+graph.mtg.schizo.origin.down0.1.align0.2.newfilt <- con_mtg_schizo$plotGraph(groups =
+                         setNames(
+                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                             names(con_mtg_schizo$getDatasetPerCell())
+                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+)
+
+graph.mtg.schizo.origin.down0.1.align0.2.newfilt
+```
+
+
+
+### downweigth 0.03 align 0.2
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.03.align0.2 <- con_mtg_schizo$plotGraph(groups =
+#                         setNames(
+#                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.03.align0.2
+```
+
+### downweigth 0.01 align 0.2
+```{r fig.width=10, fig.height=8}
+
+
+
+#graph.mtg.schizo.origin.down0.01.align0.2 <- con_mtg_schizo$plotGraph(groups =
+ #                        setNames(
+#                           con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                             names(con_mtg_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6
+#)
+
+graph.mtg.schizo.origin.down0.01.align0.2
+```
+
+**Conclusion: downweigth 0.1 align 0.2 looks optimal, use this for further analysis**
+
+
+## Graph, samples highlighted
+
+```{r fig.width=10, fig.height=8}
+graph.mtg.schizo.sample <- 
+  con_mtg_schizo$plotGraph(color.by = 'sample', mark.groups = F, show.legend = T,
+                  alpha = 0.1, size = 0.6)
+
+graph.mtg.schizo.sample
+```
+
+
+## Plot panel before label propagation
+
+```{r fig.width=13, fig.height=8}
+#plot panel with high cluster resolution before label propagation
+
+
+con_mtg_schizo$plotPanel(groups = annotations_scz2$high, font.size = 3, alpha = 0.5)
+
+```
+
+
+
+
+
+# Label propagation MTG schizo high/mid res
+
+```{r}
+#propage label, high resolution
+annot_tranfer_mtg_highres <-
+  con_mtg_schizo$propagateLabels(labels = annotations_scz2$high, verbose = T)
+
+#propage label, mid resolution
+annot_tranfer_mtg_midres <-
+  con_mtg_schizo$propagateLabels(labels = annotations_scz2$med, verbose = T)
+
+
+str(annot_tranfer_mtg_highres)
+str(annot_tranfer_mtg_midres)
+```
+
+
+## REMOVE LABELS OF SEVERAL OPCS AND MICROGLIA CELLS THAT APPEAR AS OTHER CELL TYPES (VIP)
+
+```{r}
+#BACKUP ORIGINAL TRANSFERED LABELS
+#annot_tranfer_mtg_highres.BAK <- annot_tranfer_mtg_highres
+#annot_tranfer_mtg_midres.BAK <- annot_tranfer_mtg_midres
+
+annot_tranfer_mtg_highres <- annot_tranfer_mtg_highres.BAK
+annot_tranfer_mtg_midres <- annot_tranfer_mtg_midres.BAK
+
+#REMOVE ABBERANTLY ASSIGNED CELLS
+
+#make vector with names of cells to be removed
+mtg_remove_cells_hres <-
+    annot_tranfer_mtg_highres$labels[
+      con_allen_mtg$clusters$leiden$groups[con_allen_mtg$clusters$leiden$groups == "16" | con_allen_mtg$clusters$leiden$groups == "17"] %>% names] %>%
+    grepl("Glia|Other", .) %>% {!.} %>% (con_allen_mtg$clusters$leiden$groups[con_allen_mtg$clusters$leiden$groups == "16" | 
+                                                                                con_allen_mtg$clusters$leiden$groups == "17"] %>% names)[.]
+
+
+
+
+mtg_remove_cells_midres <-
+    annot_tranfer_mtg_midres$labels[
+      con_allen_mtg$clusters$leiden$groups[con_allen_mtg$clusters$leiden$groups == "16" | con_allen_mtg$clusters$leiden$groups == "17"] %>% names] %>%
+    grepl("Glia|Other", .) %>% {!.} %>% (con_allen_mtg$clusters$leiden$groups[con_allen_mtg$clusters$leiden$groups == "16" | 
+                                                                                con_allen_mtg$clusters$leiden$groups == "17"] %>% names)[.]
+
+
+
+
+
+
+#remove cells from hres annotation transfer
+annot_tranfer_mtg_highres$labels <- annot_tranfer_mtg_highres$labels[! names(annot_tranfer_mtg_highres$labels) %in% mtg_remove_cells_hres]
+
+annot_tranfer_mtg_highres$label.distribution <- annot_tranfer_mtg_highres$label.distribution[! rownames(annot_tranfer_mtg_highres$label.distribution) %in%
+                                                                                               mtg_remove_cells_hres, ]
+annot_tranfer_mtg_highres$uncertainty <- annot_tranfer_mtg_highres$uncertainty[! names(annot_tranfer_mtg_highres$uncertainty) %in% mtg_remove_cells_hres]
+
+
+
+#remove cells from midres annotation transfer
+annot_tranfer_mtg_midres$labels <- annot_tranfer_mtg_midres$labels[! names(annot_tranfer_mtg_midres$labels) %in% mtg_remove_cells_midres]
+
+annot_tranfer_mtg_midres$label.distribution <- annot_tranfer_mtg_midres$label.distribution[! rownames(annot_tranfer_mtg_midres$label.distribution) %in%
+                                                                                               mtg_remove_cells_midres, ]
+annot_tranfer_mtg_midres$uncertainty <- annot_tranfer_mtg_midres$uncertainty[! names(annot_tranfer_mtg_midres$uncertainty) %in% mtg_remove_cells_midres]
+
+
+```
+
+## RENAME MED RES SUBTYPES in annotation transfer info
+```{r}
+annot_tranfer_mtg_midres$labels %<>% gsub("L2_CUX2_FREM3", "L2_3_CUX2_FREM3", .) %>% gsub("L2_CUX2_PRSS12", "L3_CUX2_PRSS12", .)
+
+colnames(annot_tranfer_mtg_midres$label.distribution) %<>% gsub("L2_CUX2_FREM3", "L2_3_CUX2_FREM3", .) %>% gsub("L2_CUX2_PRSS12", "L3_CUX2_PRSS12", .)
+
+```
+
+
+
+### Verify label removal
+```{r fig.width=12, fig.height=10}
+con_allen_mtg$plotGraph(groups = annot_tranfer_mtg_highres$labels, font.size = 3)
+con_allen_mtg$plotGraph(groups = annot_tranfer_mtg_midres$labels, font.size = 3)
+
+
+```
+
+
+
+
+## Plot panel, transfered labels high/mid res, + Allen annotations
+```{r fig.width=13, fig.height=8}
+#Panel with high resolution transfered lables
+
+con_mtg_schizo$plotPanel(groups = annot_tranfer_mtg_highres$labels, font.size = 3, alpha = 0.5)
+
+
+#Panel with mid rssolution transfered labels
+
+con_mtg_schizo$plotPanel(groups = annot_tranfer_mtg_midres$labels, font.size = 3, alpha = 0.5)
+```
+
+
+
+## Graph MTG HIGH/MID res after label propagation
+
+```{r fig.width=10, fig.height=8}
+#high resolution
+
+graph.mtg.hi.res.prop <-
+  con_mtg_schizo$plotGraph(groups = annot_tranfer_mtg_highres$labels, alpha = 0.1, size = 0.6,
+                    font.size = 4) +
+    scale_color_manual(values = high.pal)
+
+graph.mtg.hi.res.prop
+
+#mid resolution
+
+graph.mtg.mid.res.prop <-
+  con_mtg_schizo$plotGraph(groups = annot_tranfer_mtg_midres$labels, alpha = 0.1, size = 0.6,
+                    font.size = 4) +
+    scale_color_manual(values = med.pal)
+
+graph.mtg.mid.res.prop
+
+```
+
+
+
+
+
+
+
+## Plot statistics HIGH/MID RES label propagation
+
+```{r fig.width=10, fig.height=7}
+#Plot barplots HIGH RES to show cell origin in different clusters
+
+plotClusterBarplots(con_mtg_schizo, groups = 
+                      #con_new$clusters$leiden$groups
+                      as.factor(annot_tranfer_mtg_highres$labels), 
+                      sample.factor = setNames(
+                             con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_mtg_schizo$getDatasetPerCell())
+                           )
+                      ) +
+  theme(axis.text = element_text(angle = 90))
+
+
+
+#Plot barplots MID RES to show cell origin in different clusters
+plotClusterBarplots(con_mtg_schizo, groups = 
+                      #con_new$clusters$leiden$groups
+                      as.factor(annot_tranfer_mtg_midres$labels), 
+                      sample.factor = setNames(
+                             con_mtg_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_mtg_schizo$getDatasetPerCell())
+                           )
+                      ) +
+  theme(axis.text = element_text(angle = 90))
+
+
+```
+
+
+```{r fig.width=8, fig.height=5}
+#Plot distribution of cells, HIGH RESOLUTION clusters
+
+transf.mtg.hres.df1 <- data.frame(clusters = annot_tranfer_mtg_highres$labels,
+                             origin = con_mtg_schizo$getDatasetPerCell()[names(annot_tranfer_mtg_highres$labels)] %>% 
+                               gsub("^MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .) 
+                             )
+
+
+
+
+
+ggplot(data = transf.mtg.hres.df1, aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "High Resolution", y = "Fraction of cells")
+
+
+
+#Plot distribution of cells, MIDDLE RESOLUTION clusters
+
+transf.mtg.mres.df1 <- data.frame(clusters = annot_tranfer_mtg_midres$labels,
+                             origin = con_mtg_schizo$getDatasetPerCell()[names(annot_tranfer_mtg_midres$labels)] %>% 
+                               gsub("^MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .)
+                             )
+
+
+
+
+
+ggplot(data = transf.mtg.mres.df1, aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "Medium Resolution", y = "Fraction of cells")
+
+
+
+
+```
+
+
+**Conclusions: fraction of cells in mid resolution clusters looks good, for high resolution clusters Allen cells makes low minority in Sst_Npy and Sst_Th**
+
+
+### Amount Allen cells, HIGH/MID RES propagation
+
+
+```{r fig.width=8, fig.heigth=6}
+#High resolution clusters
+ggplot(data = transf.mtg.hres.df1[transf.mtg.hres.df1$origin == "ALLEN",], aes(x = clusters)) +
+  geom_bar() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "# Allen cells, High resolution clusters")
+
+
+transf.mtg.hres.df1 %>% filter(origin == "ALLEN") %>% group_by(clusters) %>%  summarize(n = n()) %>%
+  print()
+
+
+
+#Middle resolution clusters
+ggplot(data = transf.mtg.mres.df1[transf.mtg.mres.df1$origin == "ALLEN",], aes(x = clusters)) +
+  geom_bar() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "# Allen cells, Medium resolution clusters")
+
+
+transf.mtg.mres.df1 %>% filter(origin == "ALLEN") %>% group_by(clusters) %>%  summarize(n = n()) %>%
+  print()
+
+
+```
+**Conclusions:** 
+  **High  resolution: the lowest Allen cells: L5_Fezf2_Adra1a(36 cells) Sst_Npy(1 cell!!!!!) Sst_Th (5 cells!!!!); Last 2 probably absent in Allen data!!!!**
+  **Middle resolution: L5_Fezf2_Adra1a(33 cells) is the lowest amount of Allen cells, but looks good to me**
+
+
+
+
+### Plot MTG uncertainty HIGH/MID RES
+
+```{r fig.width=12, fig.height=5}
+#plot panel with uncertainty highlighted HIGH RES
+
+con_mtg_schizo$plotPanel(colors = annot_tranfer_mtg_highres$uncertainty, 
+                  show.legend = T, legend.title="Uncertainty", plot.na = F)
+
+#plot panel with uncertainty highlighted MID RES
+
+con_mtg_schizo$plotPanel(colors = annot_tranfer_mtg_midres$uncertainty, 
+                  show.legend = T, legend.title="Uncertainty", plot.na = F)
+```
+
+
+
+```{r fig.width=10, fig.height=4}
+#Plot uncertainty subtype by subtype
+
+#check if nuclei order is same in all elements of annot_tranfer_mtg high/mid res
+(annot_tranfer_mtg_highres$labels %>% names() == 
+  annot_tranfer_mtg_highres$uncertainty %>% names()) %>% all()
+
+(annot_tranfer_mtg_highres$labels %>% names() == 
+  annot_tranfer_mtg_highres$label.distribution %>% names()) %>% all()
+
+
+
+(annot_tranfer_mtg_midres$labels %>% names() == 
+  annot_tranfer_mtg_midres$uncertainty %>% names()) %>% all()
+
+(annot_tranfer_mtg_midres$labels %>% names() == 
+  annot_tranfer_mtg_midres$label.distribution %>% names()) %>% all()
+
+#Indeed order of elements is the same
+
+#HIGH RESOLUTION
+uncert.mtg.hres.df <-
+  annot_tranfer_mtg_highres$uncertainty %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_highres$uncertainty[.] %>%
+    data.frame(uncertainty = .)
+
+str(uncert.mtg.hres.df)
+
+uncert.mtg.hres.df$clusters <-
+annot_tranfer_mtg_highres$labels %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_highres$labels[.] %>% 
+  factor(levels = c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+         )
+
+
+
+plot.mtg.uncert.hres <-
+  ggplot(uncert.mtg.hres.df, aes(clusters, uncertainty, color = clusters)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+    coord_cartesian(ylim = c(-0.08, 1)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "High resolution")
+  
+plot.mtg.uncert.hres  
+
+
+
+
+
+
+#MIDDLE RESOLUTION
+uncert.mtg.mres.df <-
+  annot_tranfer_mtg_midres$uncertainty %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_midres$uncertainty[.] %>%
+    data.frame(uncertainty = .)
+
+
+
+uncert.mtg.mres.df$clusters <-
+annot_tranfer_mtg_midres$labels %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_midres$labels[.] %>% 
+    factor(levels = 
+           c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+         )
+
+
+
+plot.mtg.uncert.mres <-
+  ggplot(uncert.mtg.mres.df, aes(clusters, uncertainty, color = clusters)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+    coord_cartesian(ylim = c(-0.08, 1)) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Middle resolution")
+  
+plot.mtg.uncert.mres  
+
+
+
+```
+
+
+
+
+### Plot MTG probability HIGH/MID of cells belonging to cluster
+
+```{r fig.width=10, fig.height=4}
+
+#Plot probability HIGH RES of each nuclei to belong to a specific cluster
+#select Allen cells
+probab.mtg.hres.df <-
+  annot_tranfer_mtg_highres$label.distribution %>% rownames() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_highres$label.distribution[.,]  %>% as.data.frame()
+
+
+#add cluster names
+probab.mtg.hres.df$cluster <-
+  annot_tranfer_mtg_highres$labels %>% names() %>% 
+  grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_highres$labels[.] %>% 
+  factor(levels = c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+         )
+  
+  
+#get probability of nucleus belonging to a certain cluster
+probab.mtg.hres.df$cluster_probability <-
+  probab.mtg.hres.df %>%
+    apply(., 1, function(x) {x[colnames(.) == x["cluster"]]}) %>% as.numeric()
+
+#also other option also possible
+#probab.hres.df %>%
+#    apply(., 1, function(x) {x[names(x) == x["cluster"]]})
+
+
+#plot probability of nuclei belonging to clusters
+
+plot.probab.mtg.hres <-
+  ggplot(probab.mtg.hres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "High resolution subtype probability, MTG estimate",  y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+  
+
+  
+plot.probab.mtg.hres  
+
+
+
+
+
+
+
+
+
+
+
+
+#Plot probability MIDDLE RES of each nuclei to belong to a specific cluster
+#select Allen cells
+probab.mtg.mres.df <-
+  annot_tranfer_mtg_midres$label.distribution %>% rownames() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_midres$label.distribution[.,]  %>% as.data.frame()
+
+
+#add cluster names
+probab.mtg.mres.df$cluster <-
+  annot_tranfer_mtg_midres$labels %>% names() %>% 
+  grepl("^MB", .) %>% {!.} %>% annot_tranfer_mtg_midres$labels[.] %>% 
+  factor(levels = c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+         )
+                                    
+  
+  
+#get probability of nucleus belonging to a certain cluster
+probab.mtg.mres.df$cluster_probability <-
+  probab.mtg.mres.df %>%
+    apply(., 1, function(x) {x[colnames(.) == x["cluster"]]}) %>% as.numeric()
+
+#also other option also possible
+#probab.hres.df %>%
+#    apply(., 1, function(x) {x[names(x) == x["cluster"]]})
+
+
+#plot probability of nuclei belonging to clusters
+
+plot.probab.mtg.mres <-
+  ggplot(probab.mtg.mres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+ scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Medium resolution subtype probability, MTG estimate",  y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+
+
+
+
+
+
+  
+plot.probab.mtg.mres  
+
+
+```
+
+
+
+
+
+# Conos MTG Allen w/o schizo - for visualization reasons to ease gene expression highlighting etc on one plot - MOST OF MARKER GENE VISUALIZATION IN SEPARATE R-studio PROJECT
+
+
+```{r}
+
+p2.list.mtg.allen <- lapply(allen_list_2019_mtg, basicP2proc, n.cores = 30, n.odgenes = 3000, min.cells.per.gene = 0,
+                  min.transcripts.per.cell = 0, get.largevis = F, get.tsne = T, make.geneknn = F
+)
+
+#get.tsne is needed for downstreat visualization of panel of local clusters
+
+
+```
+
+## Allen MTG conos
+
+```{r}
+#new conos
+
+con_allen_mtg <- Conos$new(p2.list.mtg.allen,n.cores = 30)
+```
+
+
+
+## KNN graph Allen conos
+```{r}
+#build knn graph
+
+con_allen_mtg$buildGraph(k = 30, k.self = 5, 
+               space = "PCA",
+               ncomps = 30, n.odgenes = 3000, matching.method = "mNN", metric = "angular",
+               score.component.variance = T, verbose = T,
+             
+               
+#                balancing.factor.per.cell = 
+#                        con_allen_mtg$getDatasetPerCell(),
+#               same.factor.downweight = 0.1,   
+               alignment.strength = 0.1
+)
+```
+
+
+
+
+## UMAP Allen MTG conos
+
+```{r}
+con_allen_mtg$embedGraph(method = 'UMAP', min.dist = 0.1, spread = 10, n.cores = 40, min.prob.lower = 1e-7)
+
+```
+
+
+## Save MTG Allen only conons + transfered annotations
+```{r}
+write_rds(con_allen_mtg, "./rds_objects/mtg_allen_only.con.rds", compress = "gz")
+write_rds(annot_tranfer_mtg_highres, "./rds_objects/mtg_high_transf_annotations.rds")
+write_rds(annot_tranfer_mtg_midres, "./rds_objects/mtg_med_transf_annotations.rds")
+```
+
+
+
+
+## Plot statistics HIGH/MID RES label propagation
+
+```{r fig.width=10, fig.height=7}
+#Plot barplots to show cell origin in different clusters
+
+plotClusterBarplots(con_allen_mtg, groups = as.factor(annot_tranfer_mtg_highres$labels)) +
+  theme(axis.text = element_text(angle = 90))
+
+
+
+plotClusterBarplots(con_allen_mtg, groups = as.factor(annot_tranfer_mtg_midres$labels)) +
+  theme(axis.text = element_text(angle = 90))
+
+
+#ggsave("barplots.transfer.hres.pdf", barplots.transfer.hres, width = 60, height = 7, 
+#       limitsize = F)
+
+```
+
+
+```{r fig.width=8, fig.height=5}
+#Plot distribution of cells manually
+
+ggplot(data = data.frame(clusters = annot_tranfer_mtg_highres$labels[
+                               names(con_allen_mtg$getDatasetPerCell())],
+                             origin = con_allen_mtg$getDatasetPerCell()
+                             ),
+       aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "High resolution", y = "Fraction of cells")
+
+
+
+ggplot(data = data.frame(clusters = annot_tranfer_mtg_midres$labels[
+                               names(con_allen_mtg$getDatasetPerCell())],
+                             origin = con_allen_mtg$getDatasetPerCell()
+                             ),
+       aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "Middle resolution", y = "Fraction of cells")
+
+
+
+```
+
+**High res: problems with Sst_Npy**
+**Mid Res: looks OK**
+
+
+## Graph Allen MTG with samples highlighted
+
+```{r fig.width=8, fig.height=6}
+
+  con_allen_mtg$plotGraph(color.by = 'sample', mark.groups = F, show.legend = T,
+                  alpha = 0.05, size = 1)
+
+
+```
+
+## Graph MTG HIGH RES transfered labels
+```{r fig.width=12, fig.height=10}
+#high resolution Transfered labels
+
+#graph.high.res.allen.mtg <-
+  con_allen_mtg$plotGraph(groups = annot_tranfer_mtg_highres$labels, alpha = 0.3, size = 1,
+                    font.size = 3, show.legend = T, legend.pos = "bottom") +
+    scale_color_manual(values = high.pal)
+
+#graph.high.res.allen
+
+#ggsave("graph.high.res.allen.pdf", graph.high.res.allen, width = 8, height = 6)
+```
+
+## Graph MTG MID RES transfered labels
+```{r fig.width=12, fig.height=10}
+#high resolution Transfered labels
+
+#graph.mid.res.allen <-
+  con_allen_mtg$plotGraph(groups = annot_tranfer_mtg_midres$labels, alpha = 0.3, size = 1,
+                    font.size = 3, show.legend = T, legend.pos = "bottom") +
+    scale_color_manual(values = med.pal)
+
+#graph.mid.res.allen
+
+#ggsave("graph.mid.res.allen.pdf", graph.mid.res.allen, width = 8, height = 6)
+```
+
+
+
+## Leiden clusters
+
+
+```{r}
+con_allen_mtg$findCommunities(method = leiden.community, resolution = 1
+ 
+  )
+
+con_allen_mtg$plotGraph(#clustering = "leiden"
+  groups = con_allen_mtg$clusters$leiden$groups#[con_allen_mtg$clusters$leiden$groups == "17"]
+  )
+
+```
+
+
+```{r}
+con_allen_mtg$plotGraph(groups = annot_tranfer_mtg_highres$labels[annot_tranfer_mtg_highres$labels == "SST_NPY"],
+                        plot.na = T, keep.limit = T, size = 2, alph = 0.1
+  )
+```
+
+**PLOTTED ALL MARKERS IN A SEPARATE R-STUDIO PROJECT**
+
+
+
+## Plot markers MTG Allen
+
+```{r fig.width=8, fig.height=8}
+#Astrocytes
+plot.list.Allen.ast.mtg <- lapply(X = c("GFAP", "AQP4", "SLC1A3", "SLC1A2", "GJB6", "GLUL", "FGFR3", 
+                                "ALDH1L1", "S100B", "ATP1B2"), function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.ast.mtg, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+```{r fig.width=8, fig.height=6}
+#Oligos
+plot.list.Allen.olig.mtg <- lapply(X = c("MBP", "MOG", "MAG", "SOX10", "CNDP1", "OPALIN","MOBP"), function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.olig.mtg, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+```{r fig.width=8, fig.height=6}
+#OPCs
+plot.list.Allen.opc.mtg <- lapply(X = c("CSPG4", "PDGFRA", "OLIG1", "OLIG2", "SOX10", "CSPG5", "PCDH15"),
+                               function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.opc.mtg, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=4}
+#Microglia
+plot.list.Allen.u.mtg <- lapply(X = c("CX3CR1", "AIF1", "ITGAM", "CD68", "C3"),
+                               function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.u.mtg, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=20}
+#Endothelial
+plot.list.Allen.end.mtg <- lapply(X = c("FLT1", "CD34", "PECAM1", "ICAM2", "TIE1", "CDH5", "CLDN5", "ADGRF5", "EMCN", "APLN", "CD82", "CHST1", "APOD", "VTN", "ATP13A5", "PTH1R", "TAGLN", "BMX", "LUM", "IL33", "CD93", "CLEC1A", "SLC16A1", "ITIH5", 
+  "CXCL12"),
+                               function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.end.mtg, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=12}
+#Pericyte
+plot.list.Allen.peri.mtg <- lapply(X = c("EMCN", "VTN", "CSPG4", "ATP13A5", "PTH1R", "KCNJ8", "ABCC9", "APLN", "CD82", "CHST1", "CLDN5", "ADGRF5", 
+  "APOD", "IFITM1", "CASQ2"),
+                               function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.peri.mtg, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+
+```{r fig.width=8, fig.height=15}
+#Neurons general
+plot.list.Allen.neur.mtg <- lapply(X = c("SNAP25", "CELF4", "RBFOX3","SYT1", "SYP", "ROBO2", "SCN2A", "MEG3",
+                                     "CAMK4", "GABRA1", 
+                                     "SYNPR", "SCG2", "GAD1", "SLC32A1", "GABRB2", "CHGB",
+                                     "CCK", "SLC17A7", "SLC17A6",  "SV2B", "TBR1", "CAMK2A", "SATB2", "RORB"),
+                               function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.neur.mtg, ncol = 3)
+
+#arrangeGrob(grobs = plot.list.Allen, nrow = 3)
+
+
+```
+
+### Plot MTG excitatory
+```{r fig.width=12, fig.height=45}
+#Neurons excitatory markers
+plot.list.Allen.neur.exc.mtg <- lapply(X = c("CUX2", "LAMP5", "PDGFD", "MARCH1", "FREM3", "SV2C", "THEMIS", "SEMA3A",
+                                          "FEZF2", "TLE4", "HTR2C", "ADRA1A", "ABO", "UNC5D", "RORB", "SCHLAP1",
+                                          "ARHGAP15", "MET", "LRRK1", "MME", "PRSS12", "SCUBE1", "NTNG2"),
+                               function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x, size = 0.3, alpha = 1)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.neur.exc.mtg, ncol = 2)
+
+#arrangeGrob(grobs = plot.list.Allen, ncol = 3)
+
+
+```
+
+
+
+### Plot MTG inhibitory
+```{r fig.width=12, fig.height=45}
+#Neurons excitatory markers
+plot.list.Allen.neur.inh.mtg <- lapply(X = c("PVALB", "CRH", "MEPE", "NOS1", "VIP", "ABI3BP", "RELN", "TYR", "ID2",
+                                         "CRH", "SSTR1", "SEMA3C", "SST", "CALB1", "NMBR", "NCKAP5", "PAX6", "TH",
+                                         "STK32A", "NPY", "TAC3", "LAMP5"),
+                               function(x) {
+  con_allen_mtg$plotGraph(gene = x, title = x, size = 0.3, alpha = 1)
+}
+)
+
+
+grid.arrange(grobs = plot.list.Allen.neur.inh.mtg, ncol = 2)
+
+#arrangeGrob(grobs = plot.list.Allen, ncol = 3)
+
+
+```
+
+
+
+**HIGH RES**
+**Conclusions: in general transfer looks good. Some OPC and microglia were miss-assigned as neurons - removed those glial cells from analysis**
+
+
+* 
+* 
+* 
+* 
+* 
+* 
+* 
+
+
+
+**MID RES**
+**Conclusion: transfer looks good
+
+
+
+# Layer distr. MTG HIGH RES
+
+
+```{r, fig.width=15, fig.heigth=8}
+
+layers.hres.mtg <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_mtg_highres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_mtg_highres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_mtg_highres$labels)] %>%
+         factor(levels = c("L6", "L5", "L4", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.45, alpha = 0.4, size = 0.7, show.legend = F) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5, 5.5), linetype = 2, size = 0.6, colour = "grey") +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "Layer distribution of high resolution subtypes, MTG estimate") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 14), plot.title = element_text(hjust = 0.5, size = 18),
+        axis.text.y = element_text(size = 14), axis.title = element_text(size = 14),
+        text = element_text(family = "Helvetica"), axis.title.x = element_blank())
+
+
+layers.hres.mtg
+ 
+
+
+
+```
+
+
+# Layer distr. MTG MID RES
+
+
+```{r, fig.width=15, fig.heigth=8}
+
+layers.mres.mtg <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_mtg_midres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_mtg_midres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_mtg_midres$labels)] %>%
+         factor(levels = c("L6", "L5", "L4", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.45, alpha = 0.4, size = 0.7, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 14), plot.title = element_text(hjust = 0.5, size = 18),
+        axis.text.y = element_text(size = 14), axis.title = element_text(size = 14),
+        text = element_text(family = "Helvetica"), axis.title.x = element_blank()) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5, 5.5), linetype = 2, size = 0.6, colour = "grey") +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Layer distribution of medium resolution subtypes, MTG estimate")
+
+
+layers.mres.mtg
+ 
+```
+
+
+
+
+
+
+
+
+
+
+# M1C Allen data, estimation of layer position in our Schizo data
+
+M1C Allen data
+```{r}
+#Split Allen 2019 datset by donor id and add into new list
+
+#M1C is split into 2 regions: M1lm - lower limb and M1ul - upper limb
+allen_list_2019_m1c <- lapply(annotation_allen$external_donor_name_label %>% unique(), 
+                     function(x) 
+                       allen_cm[ ,annotation_allen$external_donor_name_label == x &
+                                  (annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm")]
+
+) %>% setNames(annotation_allen$external_donor_name_label %>% unique())
+
+str(allen_list_2019_m1c)
+
+
+#Combine schizo cms list remapped against allen genome and M1C countmatrixes
+
+
+cms_m1c_schizo <- append(cms_scz_AlGen, allen_list_2019_m1c)
+
+str(cms_m1c_schizo)
+
+
+
+
+
+
+
+```
+
+
+
+## Pagoda2 object list, allen 2019 M1C + Schzio
+
+
+```{r}
+
+p2.list.m1c.schizo <- lapply(cms_m1c_schizo, basicP2proc, n.cores = 30, n.odgenes = 3000, min.cells.per.gene = 0,
+                  min.transcripts.per.cell = 0, get.largevis = F, get.tsne = T, make.geneknn = F
+)
+
+#get.tsne is needed for downstreat visualization of panel of local clusters
+```
+
+## Conos, M1C Allen 2019 + remapped scz data with Allen genome
+
+```{r}
+#new conos
+
+con_m1c_schizo <- Conos$new(p2.list.m1c.schizo,n.cores = 40)
+```
+
+
+
+## KNN graph
+```{r}
+#build knn graph
+
+con_m1c_schizo$buildGraph(k = 30, k.self = 5, 
+               space = "PCA",
+               ncomps = 30, n.odgenes = 3000, matching.method = "mNN", metric = "angular",
+               score.component.variance = T, verbose = T, 
+               
+               
+#               balancing.factor.per.cell = 
+#                 append(
+#                    setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                             ),
+#                     setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                             )
+#                      ),
+#               same.factor.downweight = 0.1,               
+#               
+               alignment.strength = 0.1 
+)
+```
+
+
+## Make UMAP embedding
+
+```{r}
+con_m1c_schizo$embedGraph(method = 'UMAP', min.dist = 0.1, spread = 10, n.cores = 40, min.prob.lower = 1e-7)
+
+```
+
+## save conos object
+```{r}
+write_rds(con_m1c_schizo, "./rds_objects/con_m1c_schizo.rds", compress = "gz")
+```
+
+
+
+
+## Graph, sample origin highlighted, 
+
+### No forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin no force alignment
+
+
+#graph.m1c.schizo.origin.noforce <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.noforce
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS no force alignment
+
+
+#graph.m1c.schizo.origin.SUBREG.noforce <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+ #                   ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.noforce
+```
+
+
+
+### Alignment 0.3 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.3 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.3
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.3 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.3
+```
+
+
+### Alignment 0.1 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.1 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+ #                             names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.1
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.1 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.1
+```
+
+### Alignment 0.1 NEW FILTER NEW CONOS forced alignment used 
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+graph.m1c.schizo.origin.al0.1.new <- con_m1c_schizo$plotGraph(groups =
+                          setNames(
+                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_m1c_schizo$getDatasetPerCell())
+                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+)
+
+graph.m1c.schizo.origin.al0.1.new
+```
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS NEW CONOS NEW FILTER
+
+
+graph.m1c.schizo.origin.SUBREG.al0.1.new <- con_m1c_schizo$plotGraph(groups =
+        append(
+          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+                    ),
+          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+                    )
+            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+) +
+  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.1.new
+```
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS NEW CONOS NEW FILTER
+
+
+graph.m1c.schizo.origin.SUBREG.al0.1.new.no.na <- con_m1c_schizo$plotGraph(groups =
+        
+          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+                    ),
+          
+            mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1, plot.na = F
+) +
+  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.1.new.no.na
+```
+
+
+
+
+
+
+
+### Alignment 0.03 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.03 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.03
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.03 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.03
+```
+
+
+
+
+
+
+
+### Alignment 0.5 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.5 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.5
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.5 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.5
+```
+
+
+
+### Al 0.3 down 0.01 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.3.down0.01 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.3.down0.01
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.3.down0.01 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.3.down0.01
+```
+
+
+### Al 0.3 down 0.1 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.3.down0.1 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.3.down0.1
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.3.down0.1 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.3.down0.1
+```
+
+
+
+### Down 0.01 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.down0.01 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.down0.01
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.down0.01 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.down0.01
+```
+
+### Down 0.1 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+graph.m1c.schizo.origin.down0.1 <- con_m1c_schizo$plotGraph(groups =
+                          setNames(
+                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_m1c_schizo$getDatasetPerCell())
+                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+)
+
+graph.m1c.schizo.origin.down0.1
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.down0.1 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.down0.1
+```
+
+
+### Al 0.1 down 0.1 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.1.down0.1 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.1.down0.1
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.1.down0.1 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+ #                       annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.1.down0.1
+```
+
+### Al 0.1 down 0.03 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.1.down0.03 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.1.down0.03
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.1.down0.03 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.1.down0.03
+```
+
+
+### Al 0.03 down 0.1 forced alignment used
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph by sample origin
+
+
+#graph.m1c.schizo.origin.al0.03.down0.1 <- con_m1c_schizo$plotGraph(groups =
+#                          setNames(
+#                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+#                              names(con_m1c_schizo$getDatasetPerCell())
+#                           ), mark.groups = F, show.legend = T, alpha = 0.1, size = 0.6
+#)
+
+graph.m1c.schizo.origin.al0.03.down0.1
+```
+
+
+
+
+```{r fig.width=10, fig.height=8}
+#plot joint graph SHOWN M1C SUBREGIONS
+
+
+#graph.m1c.schizo.origin.SUBREG.al0.03.down0.1 <- con_m1c_schizo$plotGraph(groups =
+#        append(
+#          setNames(annotation_allen$region_label[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"],
+#                        annotation_allen$sample_name[annotation_allen$region_label == "M1ul" | annotation_allen$region_label == "M1lm"]
+#                    ),
+#          setNames(gsub("MB.*", "SCHIZO", con_m1c_schizo$getDatasetPerCell())[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)],
+#                        names(con_m1c_schizo$getDatasetPerCell()[con_m1c_schizo$getDatasetPerCell() %>% grepl("MB.*", .)])
+#                    )
+#            ), mark.groups = F, show.legend = T, alpha = 0.7, size = 0.1
+#) +
+#  scale_color_manual(values = c("#99CC66", "#FF66CC", "#FFFFFF"))
+  
+
+graph.m1c.schizo.origin.SUBREG.al0.03.down0.1
+```
+
+
+
+
+### Compare best conditions
+```{r fig.width=14, fig.height=30}
+plot_grid(plotlist = list(
+  graph.m1c.schizo.origin.noforce, graph.m1c.schizo.origin.SUBREG.noforce, graph.m1c.schizo.origin.down0.1, graph.m1c.schizo.origin.SUBREG.down0.1,
+  graph.m1c.schizo.origin.al0.03, graph.m1c.schizo.origin.SUBREG.al0.03,
+  graph.m1c.schizo.origin.al0.1, graph.m1c.schizo.origin.SUBREG.al0.1,
+  graph.m1c.schizo.origin.al0.1.down0.1, graph.m1c.schizo.origin.SUBREG.al0.1.down0.1, 
+  graph.m1c.schizo.origin.al0.03.down0.1, graph.m1c.schizo.origin.SUBREG.al0.03.down0.1
+  
+), ncol = 2
+
+)
+
+
+
+
+```
+
+
+
+```{r fig.width=14, fig.height=44}
+
+  ((graph.m1c.schizo.origin.noforce | graph.m1c.schizo.origin.SUBREG.noforce) + labs(title = "No Force")) / 
+  ((graph.m1c.schizo.origin.down0.1 | graph.m1c.schizo.origin.SUBREG.down0.1) + labs(title = "Down 0.1")) /
+  ((graph.m1c.schizo.origin.al0.03 | graph.m1c.schizo.origin.SUBREG.al0.03) + labs(title = "Align 0.03")) /
+  ((graph.m1c.schizo.origin.al0.1 | graph.m1c.schizo.origin.SUBREG.al0.1) + labs(title = "Align 0.1")) /
+  ((graph.m1c.schizo.origin.al0.1.new | graph.m1c.schizo.origin.SUBREG.al0.1.new) + labs(title = "Align 0.1, NEW CONOS, NEW FILTER PETER")) /
+  ((graph.m1c.schizo.origin.al0.1.down0.1 | graph.m1c.schizo.origin.SUBREG.al0.1.down0.1) + labs(title = "Align 0.1, Down 0.1")) / 
+  ((graph.m1c.schizo.origin.al0.03.down0.1 | graph.m1c.schizo.origin.SUBREG.al0.03.down0.1) + labs(title = "Align 0.03, Down 0.1")) +
+  plot_layout(guides = "collect")
+  
+
+
+
+
+
+```
+
+**Align 0.1 looks the best condition. Use it**
+
+## Graph, samples highlighted
+
+```{r fig.width=10, fig.height=8}
+graph.m1с.schizo.sample <- 
+  con_m1c_schizo$plotGraph(color.by = 'sample', mark.groups = F, show.legend = T,
+                  alpha = 0.1, size = 0.6)
+
+graph.m1с.schizo.sample
+```
+
+
+# Label propagation M1C schizo high/mid res
+
+```{r}
+#propage label, high resolution
+annot_tranfer_m1c_highres <-
+  con_m1c_schizo$propagateLabels(labels = annotations_scz2$high, verbose = T)
+
+#propage label, mid resolution
+annot_tranfer_m1c_midres <-
+  con_m1c_schizo$propagateLabels(labels = annotations_scz2$med, verbose = T)
+
+
+str(annot_tranfer_m1c_highres)
+str(annot_tranfer_m1c_midres)
+```
+
+
+## REMOVE LABELS OF SEVERAL OPCS AND MICROGLIA (maybe couple of endothelial) CELLS THAT APPEAR AS NEURONS
+
+```{r}
+#BACKUP ORIGINAL TRANSFERED LABELS
+#annot_tranfer_m1c_highres.BAK <- annot_tranfer_m1c_highres
+#annot_tranfer_m1c_midres.BAK <- annot_tranfer_m1c_midres
+
+annot_tranfer_m1c_highres <- annot_tranfer_m1c_highres.BAK
+annot_tranfer_m1c_midres <- annot_tranfer_m1c_midres.BAK
+
+#REMOVE ABBERANTLY ASSIGNED CELLS
+
+#make vector with names of cells to be removed
+m1c_remove_cells_hres <-
+    annot_tranfer_m1c_highres$labels[
+      con_allen_m1c$clusters$leiden$groups[con_allen_m1c$clusters$leiden$groups == "34" | con_allen_m1c$clusters$leiden$groups == "37"] %>% names] %>%
+    grepl("Glia|Other", .) %>% {!.} %>% (con_allen_m1c$clusters$leiden$groups[con_allen_m1c$clusters$leiden$groups == "34" | 
+                                                                                con_allen_m1c$clusters$leiden$groups == "37"] %>% names)[.]
+
+
+
+
+m1c_remove_cells_midres <-
+    annot_tranfer_m1c_midres$labels[
+      con_allen_m1c$clusters$leiden$groups[con_allen_m1c$clusters$leiden$groups == "34" | con_allen_m1c$clusters$leiden$groups == "37"] %>% names] %>%
+    grepl("Glia|Other", .) %>% {!.} %>% (con_allen_m1c$clusters$leiden$groups[con_allen_m1c$clusters$leiden$groups == "34" | 
+                                                                                con_allen_m1c$clusters$leiden$groups == "37"] %>% names)[.]
+
+
+
+
+
+
+#remove cells from hres annotation transfer
+annot_tranfer_m1c_highres$labels <- annot_tranfer_m1c_highres$labels[! names(annot_tranfer_m1c_highres$labels) %in% m1c_remove_cells_hres]
+
+annot_tranfer_m1c_highres$label.distribution <- annot_tranfer_m1c_highres$label.distribution[! rownames(annot_tranfer_m1c_highres$label.distribution) %in%
+                                                                                               m1c_remove_cells_hres, ]
+annot_tranfer_m1c_highres$uncertainty <- annot_tranfer_m1c_highres$uncertainty[! names(annot_tranfer_m1c_highres$uncertainty) %in% m1c_remove_cells_hres]
+
+
+
+#remove cells from midres annotation transfer
+annot_tranfer_m1c_midres$labels <- annot_tranfer_m1c_midres$labels[! names(annot_tranfer_m1c_midres$labels) %in% m1c_remove_cells_midres]
+
+annot_tranfer_m1c_midres$label.distribution <- annot_tranfer_m1c_midres$label.distribution[! rownames(annot_tranfer_m1c_midres$label.distribution) %in%
+                                                                                               m1c_remove_cells_midres, ]
+annot_tranfer_m1c_midres$uncertainty <- annot_tranfer_m1c_midres$uncertainty[! names(annot_tranfer_m1c_midres$uncertainty) %in% m1c_remove_cells_midres]
+
+
+```
+
+
+## RENAME MED RES SUBTYPES in annotation transfer info
+```{r}
+annot_tranfer_m1c_midres$labels %<>% gsub("L2_CUX2_FREM3", "L2_3_CUX2_FREM3", .) %>% gsub("L2_CUX2_PRSS12", "L3_CUX2_PRSS12", .)
+
+colnames(annot_tranfer_m1c_midres$label.distribution) %<>% gsub("L2_CUX2_FREM3", "L2_3_CUX2_FREM3", .) %>% gsub("L2_CUX2_PRSS12", "L3_CUX2_PRSS12", .)
+
+```
+
+
+
+### Verify label removal
+```{r fig.width=12, fig.height=10}
+con_allen_m1c$plotGraph(groups = annot_tranfer_m1c_highres$labels, font.size = 3)
+con_allen_m1c$plotGraph(groups = annot_tranfer_m1c_midres$labels, font.size = 3)
+
+
+```
+
+
+
+
+
+
+
+
+## Plot panel, transfered labels high/mid res, + Allen annotations
+```{r fig.width=13, fig.height=8}
+#Panel with high resolution transfered lables
+
+con_m1c_schizo$plotPanel(groups = annot_tranfer_m1c_highres$labels, font.size = 3, alpha = 0.5)
+
+
+#Panel with mid rssolution transfered labels
+
+con_m1c_schizo$plotPanel(groups = annot_tranfer_m1c_midres$labels, font.size = 3, alpha = 0.5)
+```
+
+
+
+## Graph M1C HIGH/MID res after label propagation
+
+```{r fig.width=10, fig.height=8}
+#high resolution
+
+graph.m1c.hi.res.prop <-
+  con_m1c_schizo$plotGraph(groups = annot_tranfer_m1c_highres$labels, alpha = 0.1, size = 0.6,
+                    font.size = 4) +
+    scale_color_manual(values = high.pal)
+
+graph.m1c.hi.res.prop
+
+#mid resolution
+
+graph.m1c.mid.res.prop <-
+  con_m1c_schizo$plotGraph(groups = annot_tranfer_m1c_midres$labels, alpha = 0.1, size = 0.6,
+                    font.size = 4) +
+    scale_color_manual(values = med.pal)
+
+graph.m1c.mid.res.prop
+
+```
+
+
+
+## Plot statistics HIGH/MID RES label propagation
+
+```{r fig.width=10, fig.height=7}
+#Plot barplots HIGH RES to show cell origin in different clusters
+
+plotClusterBarplots(con_m1c_schizo, groups = 
+                      as.factor(annot_tranfer_m1c_highres$labels), 
+                      sample.factor = setNames(
+                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_m1c_schizo$getDatasetPerCell())
+                           )
+                      ) +
+  theme(axis.text.x = element_text(angle = 90))
+
+
+
+#Plot barplots MID RES to show cell origin in different clusters
+plotClusterBarplots(con_m1c_schizo, groups = 
+                      as.factor(annot_tranfer_m1c_midres$labels), 
+                      sample.factor = setNames(
+                             con_m1c_schizo$getDatasetPerCell() %>% gsub("MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .),
+                              names(con_m1c_schizo$getDatasetPerCell())
+                           )
+                      ) +
+  theme(axis.text.x = element_text(angle = 90))
+
+
+```
+
+
+```{r fig.width=8, fig.height=5}
+#Plot distribution of cells, HIGH RESOLUTION clusters
+
+transf.m1c.hres.df1 <- data.frame(clusters = annot_tranfer_m1c_highres$labels,
+                             origin = con_m1c_schizo$getDatasetPerCell()[names(annot_tranfer_m1c_highres$labels)] %>% 
+                               gsub("^MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .)
+                             )
+
+
+
+
+
+
+ggplot(data = transf.m1c.hres.df1, aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "High Resolution", y = "Fraction of cells")
+
+
+
+#Plot distribution of cells, MIDDLE RESOLUTION clusters
+
+transf.m1c.mres.df1 <- data.frame(clusters = annot_tranfer_m1c_midres$labels,
+                             origin = con_m1c_schizo$getDatasetPerCell()[names(annot_tranfer_m1c_midres$labels)] %>% 
+                               gsub("^MB.*", "SCHIZO", .) %>%    gsub("^H200.*", "ALLEN", .)
+                             )
+
+
+
+
+
+ggplot(data = transf.m1c.mres.df1, aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "Middle Resolution", y = "Fraction of cells")
+
+
+
+
+
+
+
+```
+
+
+**Conclusions: HIGH resolution: SST_NPY, SST_TH and VIP_CRH have lowest amount of Allen cells; MID resolution is OK**
+
+
+### Amount Allen cells, HIGH/MID RES propagation
+
+
+```{r fig.width=8, fig.heigth=6}
+#High resolution clusters
+ggplot(data = transf.m1c.hres.df1[transf.m1c.hres.df1$origin == "ALLEN",], aes(x = clusters)) +
+  geom_bar() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "# Allen cells, High resolution clusters")
+
+
+transf.m1c.hres.df1 %>% filter(origin == "ALLEN") %>% group_by(clusters) %>%  summarize(n = n()) %>%
+  print()
+
+
+
+#Middle resolution clusters
+ggplot(data = transf.m1c.mres.df1[transf.m1c.mres.df1$origin == "ALLEN",], aes(x = clusters)) +
+  geom_bar() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "# Allen cells, Middle resolution clusters")
+
+
+transf.m1c.mres.df1 %>% filter(origin == "ALLEN") %>% group_by(clusters) %>%  summarize(n = n()) %>%
+  print()
+
+
+```
+**Conclusions:** 
+  **HIGH resolution:  SST_TH and SST_NPY - only 2 cells!!!!; VIP_CRH 10 cells, PVALB_CRH - 18 cells**
+  **MID resolution:  OK**
+
+
+
+
+### Plot M1C uncertainty HIGH/MID RES
+
+```{r fig.width=12, fig.height=5}
+#plot panel with uncertainty highlighted HIGH RES
+
+con_m1c_schizo$plotPanel(colors = annot_tranfer_m1c_highres$uncertainty, 
+                  show.legend = T, legend.title="Uncertainty", plot.na = F)
+
+#plot panel with uncertainty highlighted MID RES
+
+con_m1c_schizo$plotPanel(colors = annot_tranfer_m1c_midres$uncertainty, 
+                  show.legend = T, legend.title="Uncertainty", plot.na = F)
+```
+
+
+
+```{r fig.width=10, fig.height=4}
+#Plot uncertainty subtype by subtype
+
+#check if nuclei order is same in all elements of annot_tranfer_m1c high/mid res
+(annot_tranfer_m1c_highres$labels %>% names() == 
+  annot_tranfer_m1c_highres$uncertainty %>% names()) %>% all()
+
+(annot_tranfer_m1c_highres$labels %>% names() == 
+  annot_tranfer_m1c_highres$label.distribution %>% names()) %>% all()
+
+
+
+(annot_tranfer_m1c_midres$labels %>% names() == 
+  annot_tranfer_m1c_midres$uncertainty %>% names()) %>% all()
+
+(annot_tranfer_m1c_midres$labels %>% names() == 
+  annot_tranfer_m1c_midres$label.distribution %>% names()) %>% all()
+
+#Indeed order of elements is the same
+
+#HIGH RESOLUTION
+uncert.m1c.hres.df <-
+  annot_tranfer_m1c_highres$uncertainty %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_highres$uncertainty[.] %>%
+    data.frame(uncertainty = .)
+
+str(uncert.m1c.hres.df)
+
+uncert.m1c.hres.df$clusters <-
+annot_tranfer_m1c_highres$labels %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_highres$labels[.] %>% 
+  factor(levels =
+           c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+         )
+
+
+
+
+
+plot.m1c.uncert.hres <-
+  ggplot(uncert.m1c.hres.df, aes(clusters, uncertainty, color = clusters)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+    coord_cartesian(ylim = c(-0.08, 1)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "High resolution")
+  
+plot.m1c.uncert.hres  
+
+
+
+
+
+
+#MIDDLE RESOLUTION
+uncert.m1c.mres.df <-
+  annot_tranfer_m1c_midres$uncertainty %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_midres$uncertainty[.] %>%
+    data.frame(uncertainty = .)
+
+
+
+uncert.m1c.mres.df$clusters <-
+annot_tranfer_m1c_midres$labels %>% names() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_midres$labels[.] %>% 
+  factor(levels = 
+           c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+         )
+
+
+
+
+
+plot.m1c.uncert.mres <-
+  ggplot(uncert.m1c.mres.df, aes(clusters, uncertainty, color = clusters)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+    coord_cartesian(ylim = c(-0.08, 1)) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Middle resolution")
+  
+plot.m1c.uncert.mres  
+
+
+
+
+
+```
+
+
+
+
+### Plot M1c probability HIGH/MID of cells belonging to cluster
+
+```{r}
+
+#Plot probability HIGH RES of each nuclei to belong to a specific cluster
+#select Allen cells
+probab.m1c.hres.df <-
+  annot_tranfer_m1c_highres$label.distribution %>% rownames() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_highres$label.distribution[.,]  %>% as.data.frame()
+
+
+#add cluster names
+probab.m1c.hres.df$cluster <-
+  annot_tranfer_m1c_highres$labels %>% names() %>% 
+  grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_highres$labels[.] %>% 
+  factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+         )
+  
+  
+#get probability of nucleus belonging to a certain cluster
+probab.m1c.hres.df$cluster_probability <-
+  probab.m1c.hres.df %>%
+    apply(., 1, function(x) {x[colnames(.) == x["cluster"]]}) %>% as.numeric()
+
+#also other option also possible
+#probab.hres.df %>%
+#    apply(., 1, function(x) {x[names(x) == x["cluster"]]})
+
+```
+
+```{r fig.width=10, fig.height=5}
+#plot probability of nuclei belonging to clusters
+
+plot.probab.m1c.hres <-
+  ggplot(probab.m1c.hres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "High Resolution", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+  
+plot.probab.m1c.hres  
+
+
+```
+
+
+
+
+
+
+
+```{r fig.width=10, fig.height=4}
+
+#Plot probability MIDDLE RES of each nuclei to belong to a specific cluster
+#select Allen cells
+probab.m1c.mres.df <-
+  annot_tranfer_m1c_midres$label.distribution %>% rownames() %>% 
+    grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_midres$label.distribution[.,]  %>% as.data.frame()
+
+
+#add cluster names
+probab.m1c.mres.df$cluster <-
+  annot_tranfer_m1c_midres$labels %>% names() %>% 
+  grepl("^MB", .) %>% {!.} %>% annot_tranfer_m1c_midres$labels[.] %>% 
+  factor(levels = 
+          c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+         )
+  
+  
+#get probability of nucleus belonging to a certain cluster
+probab.m1c.mres.df$cluster_probability <-
+  probab.m1c.mres.df %>%
+    apply(., 1, function(x) {x[colnames(.) == x["cluster"]]}) %>% as.numeric()
+
+#also other option also possible
+#probab.hres.df %>%
+#    apply(., 1, function(x) {x[names(x) == x["cluster"]]})
+
+```
+
+
+```{r fig.width=10, fig.height=4}
+#plot probability of nuclei belonging to clusters
+
+plot.probab.m1c.mres <-
+  ggplot(probab.m1c.mres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.2, size = 1, scale = "width", maxwidth = 0.6) +
+    
+    
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.2,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Medium Resolution", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Helvetica", size = 14), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), 
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5))
+  
+plot.probab.m1c.mres  
+
+
+```
+
+
+
+
+
+
+
+# Layer distr. M1C HIGH RES
+
+
+```{r, fig.width=15, fig.heigth=8}
+
+layers.hres.m1c <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_m1c_highres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_m1c_highres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_m1c_highres$labels)] %>%
+         factor(levels = c("L6", "L5", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.45, alpha = 0.7, size = 0.7, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 14), plot.title = element_text(hjust = 0.5, size = 18),
+        axis.text.y = element_text(size = 14), axis.title = element_text(size = 14),
+        text = element_text(family = "Helvetica"), axis.title.x = element_blank()) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 0.6, colour = "grey") +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]
+                     ) +
+  labs(title = "Layer distribution of high resolution subtypes, M1C estimate")
+
+layers.hres.m1c
+ 
+
+
+```
+
+
+# Layer distr. M1C MID RES
+
+
+```{r, fig.width=15, fig.heigth=8}
+
+layers.mres.m1c <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_m1c_midres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_m1c_midres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_m1c_midres$labels)] %>%
+         factor(levels = c("L6", "L5", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.45, alpha = 0.7, size = 0.7, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 14), plot.title = element_text(hjust = 0.5, size = 18),
+        axis.text.y = element_text(size = 14), axis.title = element_text(size = 14),
+        text = element_text(family = "Helvetica"), axis.title.x = element_blank()) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 0.6, colour = "grey") +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Layer distribution of medium resolution subtypes, M1C estimate")
+
+
+layers.mres.m1c
+ 
+
+
+```
+
+
+
+
+
+# Conos M1C Allen w/o schizo - for visualization reasons to ease gene expression highlighting etc on one plot - MOST OF VISUALIZATION DONE IN SEPARATE R-STUDIO PROJECT
+
+
+```{r}
+
+p2.list.m1c.allen <- lapply(allen_list_2019_m1c, basicP2proc, n.cores = 30, n.odgenes = 3000, min.cells.per.gene = 0,
+                  min.transcripts.per.cell = 0, get.largevis = F, get.tsne = T, make.geneknn = F
+)
+
+
+str(p2.list.m1c.allen, 3)
+
+```
+
+## Allen M1C conos
+
+```{r}
+#new conos
+
+con_allen_m1c <- Conos$new(p2.list.m1c.allen,n.cores = 30)
+```
+
+
+
+## KNN graph Allen conos
+```{r}
+#build knn graph
+
+con_allen_m1c$buildGraph(k = 30, k.self = 5, 
+               space = "PCA",
+               ncomps = 30, n.odgenes = 3000, matching.method = "mNN", metric = "angular",
+               score.component.variance = T, verbose = T,
+             
+               
+#                balancing.factor.per.cell = 
+#                        con_allen_m1c$getDatasetPerCell(),
+#               same.factor.downweight = 0.1,   
+#               alignment.strength = 0.1
+)
+```
+
+
+
+
+## UMAP Allen M1C conos
+
+```{r}
+con_allen_m1c$embedGraph(method = 'UMAP', min.dist = 0.1, spread = 10, n.cores = 40, min.prob.lower = 1e-7)
+
+```
+
+
+## Save M1C Allen only conons + transfered annotations
+```{r}
+write_rds(con_allen_m1c, "./rds_objects/m1c_allen_only.con.rds", compress = "gz")
+write_rds(annot_tranfer_m1c_highres, "./rds_objects/m1c_high_transf_annotations.rds")
+write_rds(annot_tranfer_m1c_midres, "./rds_objects/m1c_mid_transf_annotations.rds")
+
+```
+
+
+
+
+## Plot statistics HIGH/MID RES label propagation
+
+```{r fig.width=10, fig.height=7}
+#Plot barplots to show cell origin in different clusters
+
+plotClusterBarplots(con_allen_m1c, groups = as.factor(annot_tranfer_m1c_highres$labels)) +
+  theme(axis.text = element_text(angle = 90))
+
+
+
+plotClusterBarplots(con_allen_m1c, groups = as.factor(annot_tranfer_m1c_midres$labels)) +
+  theme(axis.text = element_text(angle = 90))
+
+
+
+```
+
+
+```{r fig.width=8, fig.height=5}
+#Plot distribution of cells manually
+
+ggplot(data = data.frame(clusters = annot_tranfer_m1c_highres$labels[
+                               names(con_allen_m1c$getDatasetPerCell())],
+                             origin = con_allen_m1c$getDatasetPerCell()
+                             ),
+       aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "High resolution", y = "Fraction of cells")
+
+
+
+ggplot(data = data.frame(clusters = annot_tranfer_m1c_midres$labels[
+                               names(con_allen_m1c$getDatasetPerCell())],
+                             origin = con_allen_m1c$getDatasetPerCell()
+                             ),
+       aes(x = clusters)) +
+  geom_bar(aes(fill = origin), position = "fill") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "Middle resolution", y = "Fraction of cells")
+
+
+
+```
+
+**High res: looks OK**
+**Mid Res: looks OK**
+
+
+## Graph Allen M1C with samples highlighted
+
+```{r fig.width=8, fig.height=6}
+
+  con_allen_m1c$plotGraph(color.by = 'sample', mark.groups = F, show.legend = T,
+                  alpha = 0.1, size = 1)
+
+
+```
+
+## Graph M1C HIGH RES transfered labels
+```{r fig.width=12, fig.height=10}
+#high resolution Transfered labels
+
+
+  con_allen_m1c$plotGraph(groups = annot_tranfer_m1c_highres$labels, alpha = 0.3, size = 1,
+                    font.size = 3, show.legend = T, legend.pos = "bottom") +
+    scale_color_manual(values = high.pal)
+
+
+```
+
+## Graph M1C MID RES transfered labels
+```{r fig.width=12, fig.height=10}
+#high resolution Transfered labels
+
+  con_allen_m1c$plotGraph(groups = annot_tranfer_m1c_midres$labels, alpha = 0.3, size = 1,
+                    font.size = 3, show.legend = T, legend.pos = "bottom") +
+    scale_color_manual(values = med.pal)
+
+
+```
+
+
+**CONCLUSIONS - BASED ON MARKER PLOTTING IN SEPARATE RSTUDIO PROJECT**
+**High resolution:**
+**Looks OK**
+
+
+**Medium resolution:**
+**LOOKS GOOD**
+
+**BOTH: Part of OPCs and microglia were assigned as neurons - NEED TO EXCLUDE THOSE CELLS FROM ANALYSIS**
+
+
+## FIND LEIDEN COMMUNITIES - to remove some OPCs and Microglia (and endothelial) from being assigned as neurons
+
+```{r fig.width=12, fig.heigth=12}
+con_allen_m1c$findCommunities(method = leiden.community, resolution = 6
+ 
+  )
+
+con_allen_m1c$plotGraph(groups = con_allen_m1c$clusters$leiden$groups#[con_allen_m1c$clusters$leiden$groups == "15"]
+  )
+```
+
+
+
+
+# FIGURE PAPER
+
+## MTG HIGH
+
+```{r fig.width=8.36, fig.height=2.3}
+paper.layers.mtg.high <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_mtg_highres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_mtg_highres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_mtg_highres$labels)] %>%
+         factor(levels = c("L6", "L5", "L4", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.4, alpha = 0.5, size = 0.3, show.legend = F) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5, 5.5), linetype = 2, size = 1.1, colour = "grey") +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "Position, MTG estimate\nhigh resolution") +
+  theme_classic() +
+  theme(axis.text.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        text = element_text(family = "Liberation Sans"), axis.title.x = element_blank(),
+        axis.line = element_line(size = 0.8),
+        axis.ticks = element_blank())
+
+
+paper.layers.mtg.high
+
+#write_rds(paper.layers.mtg.high, "./rds_objects/paper.layers.mtg.high.rds")
+
+```
+
+
+```{r fig.width=8.36, fig.height=2}
+paper.probab.mtg.high <-
+  ggplot(probab.mtg.hres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.5, size = 0.7, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.6,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "Subtype probability, MTG\nhigh resolution",  y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Liberation Sans"), 
+        axis.title.x = element_blank(), axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        axis.line = element_line(size = 0.8),
+        axis.ticks.x = element_blank(),
+        panel.border = element_blank())
+  
+
+  
+paper.probab.mtg.high 
+
+```
+
+
+
+
+## ACC HIGH
+```{r fig.width=8.36, fig.height=2.3}
+
+paper.layers.acc.high <- 
+
+  ggplot(
+
+    data.frame(
+       Subtypes = annot_tranfer_info_highres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_info_highres$labels)]
+            ] %>% factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_info_highres$labels)] %>%
+            factor(levels = c("L6", "L5b", "L5a", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.4, alpha = 0.5, size = 0.3, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        text = element_text(family = "Liberation Sans"), axis.title.x = element_blank(),
+        axis.line = element_line(size = 0.8),
+        axis.ticks = element_blank()) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 1.1, colour = "grey") +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]
+                     ) +
+  labs(title = "Position, ACC estimate\nhigh resolution")
+
+paper.layers.acc.high
+
+ggsave("./plots/paper.layers.acc.high.pdf", paper.layers.acc.high, device = cairo_pdf, width = 8.36, height = 5, units = "in", dpi = 600)
+```
+
+
+```{r fig.width=8.36, fig.height=2}
+paper.probab.acc.high <-
+  ggplot(probab.hres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.5, size = 0.7, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.6,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "Subtype probability, ACC\nhigh resolution", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Liberation Sans"), 
+        axis.title.x = element_blank(), axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        axis.line = element_line(size = 0.8),
+        axis.ticks.x = element_blank(),
+        panel.border = element_blank())
+
+  
+paper.probab.acc.high
+
+ggsave("./plots/paper.probab.acc.high", paper.probab.acc.high, device = cairo_pdf, width = 8.36, height = 2, units = "in", dpi = 600)
+```
+
+
+
+
+## M1C HIGH
+
+```{r fig.width=8.36, fig.height=5}
+paper.layers.m1c.high <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_m1c_highres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_m1c_highres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5_MARCH1", "L2_CUX2_LAMP5_PDGFD", "L2_3_CUX2_FREM3_UNC5D", "L2_3_CUX2_FREM3_SV2C", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1_MET", 
+          "L4_RORB_SCHLAP1_MME", "L4_RORB_SCHLAP1_ARHGAP15", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4_ABO", "L5_6_FEZF2_TLE4_SCUBE1",
+          "L5_6_FEZF2_TLE4_HTR2C", "L5_6_THEMIS_SEMA3A", "L5_6_THEMIS_NTNG2", "ID2_LAMP5_NMBR", "ID2_LAMP5_CRH", "ID2_LAMP5_NOS1", "ID2_PAX6", "ID2_NCKAP5", 
+          "VIP_ABI3BP", "VIP_TYR", "VIP_RELN", "VIP_SEMA3C", "VIP_SSTR1", "VIP_CRH", "PVALB_MEPE", "PVALB_SST", "PVALB_CRH", "SST_TH", "SST_TAC3", "SST_CALB1",
+          "SST_NPY", "SST_NOS1", "SST_STK32A", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_m1c_highres$labels)] %>%
+         factor(levels = c("L6", "L5", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes, fill = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.4, alpha = 0.5, size = 0.3, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12), plot.title = element_text(hjust = 0.5, size = 15),
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        text = element_text(family = "Liberation Sans"), axis.title.x = element_blank(),
+        axis.line = element_line(size = 0.8),
+        axis.ticks = element_blank()) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 1.1, colour = "grey") +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]
+                     ) +
+  labs(title = "Position, M1C estimate\nhigh resolution")
+
+paper.layers.m1c.high
+
+ggsave("./plots/paper.layers.m1c.high.pdf", paper.layers.m1c.high, device = cairo_pdf, width = 8.36, height = 5, units = "in", dpi = 600)
+
+
+```
+
+
+```{r  fig.width=8.36, fig.height=2}
+paper.probab.m1c.high <-
+  ggplot(probab.m1c.hres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.5, size = 0.7, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.6,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = high.pal[levels(annotations_scz2$high)]) +
+  labs(title = "Subtype probability, M1C\nhigh resolution", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Liberation Sans"), 
+        axis.title.x = element_blank(), axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        axis.line = element_line(size = 0.8),
+        axis.ticks.x = element_blank(),
+        panel.border = element_blank())
+  
+paper.probab.m1c.high  
+
+```
+
+
+## MTG MED
+
+```{r fig.width=3.76, fig.height=2.3}
+paper.layers.mtg.med <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_mtg_midres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_mtg_midres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_mtg_midres$labels)] %>%
+         factor(levels = c("L6", "L5", "L4", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.4, alpha = 0.2, size = 0.3, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        text = element_text(family = "Liberation Sans"), axis.title.x = element_blank(),
+        axis.line = element_line(size = 0.8),
+        axis.ticks = element_blank()) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5, 5.5), linetype = 2, size = 1.1, colour = "grey") +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Position, MTG estimate\nmedium resolution")
+
+
+paper.layers.mtg.med
+```
+
+
+
+```{r fig.width=3.76, fig.height=2}
+paper.probab.mtg.med <-
+  ggplot(probab.mtg.mres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.5, size = 0.7, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.6,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+ scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Subtype probability, MTG\nmedium resolution",  y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Liberation Sans"), 
+        axis.title.x = element_blank(), axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        axis.line = element_line(size = 0.8),
+        axis.ticks.x = element_blank(),
+        panel.border = element_blank())
+
+
+
+
+
+
+  
+paper.probab.mtg.med 
+```
+
+
+
+
+
+## ACC MED
+
+```{r fig.width=3.76, fig.height=2.3}
+paper.layers.acc.med <-
+ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_info_midres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_info_midres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_info_midres$labels)] %>% 
+         factor(levels = c("L6", "L5b", "L5a", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.4, alpha = 0.2, size = 0.3, show.legend = F) +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 1.1, colour = "grey") +
+  theme_classic() +
+  theme(axis.text.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        text = element_text(family = "Liberation Sans"), axis.title.x = element_blank(),
+        axis.line = element_line(size = 0.8),
+        axis.ticks = element_blank()) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Position, ACC estimate\nmedium resolution")
+
+
+paper.layers.acc.med
+
+ggsave("./plots/paper.layers.acc.med.pdf", paper.layers.acc.med, device = cairo_pdf, width = 3.76, height = 5, units = "in", dpi = 600)
+
+
+```
+
+```{r fig.width=3.76, fig.height=2}
+paper.probab.acc.med <-
+  ggplot(probab.mres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.5, size = 0.7, scale = "width", maxwidth = 0.6) +
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.6,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Subtype probability, ACC\nmedium resolution", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Liberation Sans"), 
+        axis.title.x = element_blank(), axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        axis.line = element_line(size = 0.8),
+        axis.ticks.x = element_blank(),
+        panel.border = element_blank())
+
+ 
+paper.probab.acc.med 
+```
+
+
+## M1C MED
+
+```{r fig.width=3.76, fig.height=5}
+paper.layers.m1c.med <-
+ ggplot(
+
+  data.frame(
+       Subtypes = annot_tranfer_m1c_midres$labels[
+            annotation_allen$sample_name[annotation_allen$sample_name %in% names(annot_tranfer_m1c_midres$labels)]
+            ] %>% 
+         factor(levels = 
+          c("L2_CUX2_LAMP5", "L2_3_CUX2_FREM3", "L3_CUX2_PRSS12", "L4_RORB_SCHLAP1", "L4_5_FEZF2_LRRK1", "L5_FEZF2_ADRA1A", "L5_6_FEZF2_TLE4", "L5_6_THEMIS",
+          "ID2_LAMP5", "ID2_PAX6", "ID2_NCKAP5", "VIP", "PVALB", "SST", "Glia", "Other")
+          ),
+        
+        Layers = annotation_allen$cortical_layer_label[annotation_allen$sample_name %in% names(annot_tranfer_m1c_midres$labels)] %>%
+         factor(levels = c("L6", "L5", "L3", "L2", "L1"))
+        ), aes(x = Subtypes, y = Layers,  color = Subtypes)
+  ) +
+  geom_jitter(width = 0.35, height = 0.4, alpha = 0.2, size = 0.3, show.legend = F) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12), plot.title = element_text(hjust = 0.5, size = 15),
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        text = element_text(family = "Liberation Sans"), axis.title.x = element_blank(),
+        axis.line = element_line(size = 0.8),
+        axis.ticks = element_blank()) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Position, M1C estimate\nmedium resolution") +
+  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5), linetype = 2, size = 1.1, colour = "grey")
+  
+
+
+paper.layers.m1c.med
+```
+
+
+
+```{r fig.width=3.76, fig.height=2}
+paper.probab.m1c.med <-
+  ggplot(probab.m1c.mres.df, aes(x = cluster, y = cluster_probability, color = cluster)) + 
+    geom_sina(show.legend = F, alpha = 0.5, size = 0.7, scale = "width", maxwidth = 0.6) +
+    
+    
+    stat_summary(fun.data = "mean_sdl", fun.args = list(mult = 1), geom = "pointrange", size = 0.6,
+                   show.legend = FALSE, color = "black", shape = 23, fill = "grey") +
+  coord_cartesian(ylim = c(0, 1.05)) +
+  scale_color_manual(values = med.pal[levels(annotations_scz2$med)]) +
+  labs(title = "Subtype probability, M1C\nmedium resolution", y = "Probability") +
+  theme_bw() +
+  theme(text = element_text(family = "Liberation Sans"), 
+        axis.title.x = element_blank(), axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(), plot.title = element_text(hjust = 0.5, size = 15),
+        
+        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
+        axis.line = element_line(size = 0.8),
+        axis.ticks.x = element_blank(),
+        panel.border = element_blank())
+  
+paper.probab.m1c.med  
+
+
+```
+
+## SUPPL FIG S6
+
+
+
+
+```{r fig.width=12.76, fig.height=17.72}
+fig.s6 <-
+
+  paper.probab.mtg.high + paper.probab.mtg.med +
+  paper.layers.mtg.high + paper.layers.mtg.med +
+  paper.probab.acc.high + paper.probab.acc.med +
+  paper.layers.acc.high + paper.layers.acc.med +
+  paper.probab.m1c.high + paper.probab.m1c.med +
+  paper.layers.m1c.high + paper.layers.m1c.med +
+  plot_layout(width = c(3.6, 1.6), heights = c(2.5, 6, 2.5, 5, 2.5, 5), ncol = 2) &
+  plot_annotation(tag_levels = "A") & theme(plot.tag = element_text(family = " 	Liberation Sans", size = 18, face = "bold"))
+
+fig.s6
+ggsave("./plots/fig.s6.pdf", fig.s6, device = cairo_pdf, width = 12.76, height = 17.72, units = "in", dpi = 600)
+ggsave("./plots/fig.s6.tiff", fig.s6, width = 12.76, height = 17.72, units = "in", dpi = 600)
+  
+```
+
+
+## CORRESPONDENCE KU / Allen
+
+
+
+
+
+### Alluv Plot Functions
+
+```{r}
+#High res
+
+plotAlluviumHigh <- function(p.df, width.left, width.right) {
+  s.ku <- p.df %$% split(n, droplevels(KU)) %>% lapply(sqrt) %>% lapply(sqrt) %>% sapply(sum)
+  s.allen <- p.df %$% split(n, droplevels(Allen)) %>% lapply(sqrt) %>% lapply(sqrt) %>% sapply(sum)
+  s.total <- c(rev(s.ku), rev(s.allen))
+   
+
+
+
+      ggplot(p.df, aes(axis1 = KU, axis2 = Allen, y = sqrt(sqrt(n)))) +
+        geom_alluvium(aes(fill = KU), 
+          show.legend = F, width = 0.7) +
+        geom_stratum(
+ 
+          width = c(rep(width.left, length(s.ku)), rep(width.right, length(s.allen))), 
+          show.legend = F
+          ) +
+        geom_text(stat="stratum", infer.label=TRUE,
+                 size = pmin(s.total * 1.1, 3.8)
+   
+                   
+                   
+       ) +
+        scale_fill_manual(values = high.pal[levels(annotations_scz2$high)]) +
+        scale_x_discrete(limits = c("KU", "Allen"), expand = c(0, 0)) +
+        scale_y_discrete(expand = c(0, 0)) +
+        labs(subtitle = "KU high resolution subtypes") +
+        theme_classic() +
+        theme(text = element_text(family = "Liberation Sans", size = 15
+                                  ), 
+              axis.ticks = element_blank(), axis.text.y = element_blank(), axis.line = element_blank(), axis.title = element_blank(),
+              plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold")
+              )
+}
+```
+  
+
+
+
+```{r}
+#Medium res
+
+plotAlluviumMed <- function(p.df, width.left, width.right) {
+  s.ku <- p.df %$% split(n, droplevels(KU)) %>% lapply(sqrt) %>% lapply(sqrt) %>% sapply(sum)
+  s.allen <- p.df %$% split(n, droplevels(Allen)) %>% lapply(sqrt) %>% lapply(sqrt) %>% sapply(sum)
+  s.total <- c(rev(s.ku), rev(s.allen))
+   
+
+
+
+      ggplot(p.df, aes(axis1 = KU, axis2 = Allen, y = sqrt(sqrt(n)))) +
+        geom_alluvium(aes(fill = KU), 
+          show.legend = F, width = 0.7) +
+        geom_stratum(
+ 
+          width = c(rep(width.left, length(s.ku)), rep(width.right, length(s.allen))), 
+          show.legend = F
+          ) +
+        geom_text(stat="stratum", infer.label=TRUE,
+                 size = pmin(s.total * 1.3, 3.8)
+   
+                   
+                   
+       ) +
+        scale_fill_manual(values = med.pal[levels(annotations_scz2$med)]) +
+        scale_x_discrete(limits = c("KU", "Allen"), expand = c(0, 0)) +
+        scale_y_discrete(expand = c(0, 0)) +
+        labs(subtitle = "KU medium resolution subtypes") +
+        theme_classic() +
+        theme(text = element_text(family = "Liberation Sans", size = 15
+                                  ), 
+              axis.ticks = element_blank(), axis.text.y = element_blank(), axis.line = element_blank(), axis.title = element_blank(),
+              plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold")
+              )
+}
+```
+
+
+
+
+### M1C
+```{r}
+#High Res
+
+
+
+df.correspond.hres.m1c <-
+  data.frame(
+    KU = factor(annot_tranfer_m1c_highres$labels[!names(annot_tranfer_m1c_highres$labels) %>% grepl("MB", .)],
+                levels = hsub_order),
+    Allen = setNames(annotation_allen$cluster_label, annotation_allen$sample_name)[
+      names(annot_tranfer_m1c_highres$labels[!names(annot_tranfer_m1c_highres$labels) %>% grepl("MB", .)])]
+    )
+
+
+
+
+
+#sumamrize data and filter - remove correspondence <=7% of corresponding Allen subtypes - some kind of trash
+df.correspond.hres.m1c <- df.correspond.hres.m1c %>% group_by(., KU, Allen) %>% summarize(., n =  n()) %>% mutate(freq = n / sum(n)) %>%
+  ungroup() %>% filter(freq > 0.07)
+
+df.correspond.hres.m1c$Allen <- factor(df.correspond.hres.m1c$Allen, levels = df.correspond.hres.m1c$Allen %>% unique)
+
+
+
+hsub_order_allen_m1c <- df.correspond.hres.m1c %>% split(.$Allen) %>% lapply(function(x) {x %$% setNames(n, KU) %>% `/`(sum(.))}) %>% 
+  sapply(function(y) as.numeric(hsub_ranks[names(y)[which.max(y)]])  + 
+           sum(hsub_ranks[names(y)] * y) / 10
+         ) %>% sort() %>% names()
+
+df.correspond.hres.m1c %<>% mutate(KU = factor(KU, levels = hsub_order), Allen = factor(Allen, levels = hsub_order_allen_m1c))
+
+```  
+
+
+
+```{r}
+#Medium Res
+
+
+
+df.correspond.mres.m1c <-
+  data.frame(
+    KU = factor(annot_tranfer_m1c_midres$labels[!names(annot_tranfer_m1c_midres$labels) %>% grepl("MB", .)],
+                levels = msub_order),
+    Allen = setNames(annotation_allen$cluster_label, annotation_allen$sample_name)[
+      names(annot_tranfer_m1c_midres$labels[!names(annot_tranfer_m1c_midres$labels) %>% grepl("MB", .)])]
+    )
+
+
+
+
+
+#sumamrize data and filter - remove correspondence <=7% of corresponding Allen subtypes - some kind of trash
+df.correspond.mres.m1c <- df.correspond.mres.m1c %>% group_by(., KU, Allen) %>% summarize(., n =  n()) %>% mutate(freq = n / sum(n)) %>%
+  ungroup() %>% filter(freq > 0.07)
+
+df.correspond.mres.m1c$Allen <- factor(df.correspond.mres.m1c$Allen, levels = df.correspond.mres.m1c$Allen %>% unique)
+
+
+
+msub_order_allen_m1c <- df.correspond.mres.m1c %>% split(.$Allen) %>% lapply(function(x) {x %$% setNames(n, KU) %>% `/`(sum(.))}) %>% 
+  sapply(function(y) as.numeric(msub_ranks[names(y)[which.max(y)]])  + 
+           sum(msub_ranks[names(y)] * y) / 10
+         ) %>% sort() %>% names()
+
+df.correspond.mres.m1c %<>% mutate(KU = factor(KU, levels = msub_order), Allen = factor(Allen, levels = msub_order_allen_m1c))
+```
+
+
+
+
+   
+      
+```{r fig.width = 6.17, fig.height = 17.72}      
+plot.corresp.hres.m1c <- plotAlluviumHigh(df.correspond.hres.m1c, 0.65, 0.58)
+plot.corresp.hres.m1c
+```
+
+
+```{r}
+
+ggsave("./plots/fig.s_correspond.pdf", fig.s_correspond, device = cairo_pdf, width = 6.38, height = 17.72, units = "in", dpi = 600)
+
+
+
+
+
+```
+
+
+```{r fig.width = 6.17, fig.height = 17.72}      
+plot.corresp.mres.m1c <- plotAlluviumMed(df.correspond.mres.m1c, 0.4, 0.53)
+plot.corresp.mres.m1c
+```
+
+```{r fig.width = 6.17, fig.height = 5}
+plot.subtype.m1c <-
+  con_m1c_schizo$plotGraph(groups = annot_tranfer_m1c_highres$labels,
+                    alpha = 0.1, size = 0.6,
+                    font.size = 4, show.legend = F, plot.na = F
+                    ) +
+    scale_color_manual(values = high.pal) +
+  theme_void() +
+  labs(subtitle = "KU - Allen M1C alignment") +
+  theme(text = element_text(family = "Liberation Sans"), legend.position = "none", plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold"))
+  
+plot.subtype.m1c
+
+```
+
+
+```{r fig.width = 6.17, fig.height = 5}
+
+plot.origin.m1c <-
+
+con_m1c_schizo$plotGraph(groups =
+                          setNames(
+                             con_m1c_schizo$getDatasetPerCell()[names(con_m1c_schizo$getDatasetPerCell()) %in% names(annot_tranfer_m1c_highres$labels)] 
+                             %>% gsub("MB.*", "KU", .) %>%    gsub("^H200.*", "Allen", .),
+                              names(con_m1c_schizo$getDatasetPerCell())[names(con_m1c_schizo$getDatasetPerCell()) %in% names(annot_tranfer_m1c_highres$labels)]
+                           ), mark.groups = F, show.legend = T, alpha = 0.06, size = 0.6, font.size = 4, plot.na = F
+) + 
+   guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2))) +
+  
+  theme_void() +
+  labs(subtitle = "KU - Allen M1C alignment") +
+  theme(text = element_text(family = "Liberation Sans"), legend.text = element_text(size = 14), legend.position = "bottom", 
+        plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold"), legend.title = element_blank())
+
+plot.origin.m1c
+```
+
+
+
+
+
+### MTG
+```{r}
+#High Res
+
+
+
+df.correspond.hres.mtg <-
+  data.frame(
+    KU = factor(annot_tranfer_mtg_highres$labels[!names(annot_tranfer_mtg_highres$labels) %>% grepl("MB", .)],
+                levels = hsub_order),
+    Allen = setNames(annotation_allen$cluster_label, annotation_allen$sample_name)[
+      names(annot_tranfer_mtg_highres$labels[!names(annot_tranfer_mtg_highres$labels) %>% grepl("MB", .)])]
+    )
+
+
+
+
+
+#sumamrize data and filter - remove correspondence <=7% of corresponding Allen subtypes - some kind of trash
+df.correspond.hres.mtg <- df.correspond.hres.mtg %>% group_by(., KU, Allen) %>% summarize(., n =  n()) %>% mutate(freq = n / sum(n)) %>%
+  ungroup() %>% filter(freq > 0.07)
+
+df.correspond.hres.mtg$Allen <- factor(df.correspond.hres.mtg$Allen, levels = df.correspond.hres.mtg$Allen %>% unique)
+
+
+
+hsub_order_allen_mtg <- df.correspond.hres.mtg %>% split(.$Allen) %>% lapply(function(x) {x %$% setNames(n, KU) %>% `/`(sum(.))}) %>% 
+  sapply(function(y) as.numeric(hsub_ranks[names(y)[which.max(y)]])  + 
+           sum(hsub_ranks[names(y)] * y) / 10
+         ) %>% sort() %>% names()
+
+df.correspond.hres.mtg %<>% mutate(KU = factor(KU, levels = hsub_order), Allen = factor(Allen, levels = hsub_order_allen_mtg))
+
+```  
+
+
+
+```{r}
+#Medium Res
+
+
+
+df.correspond.mres.mtg <-
+  data.frame(
+    KU = factor(annot_tranfer_mtg_midres$labels[!names(annot_tranfer_mtg_midres$labels) %>% grepl("MB", .)],
+                levels = msub_order),
+    Allen = setNames(annotation_allen$cluster_label, annotation_allen$sample_name)[
+      names(annot_tranfer_mtg_midres$labels[!names(annot_tranfer_mtg_midres$labels) %>% grepl("MB", .)])]
+    )
+
+
+
+
+
+#sumamrize data and filter - remove correspondence <=7% of corresponding Allen subtypes - some kind of trash
+df.correspond.mres.mtg <- df.correspond.mres.mtg %>% group_by(., KU, Allen) %>% summarize(., n =  n()) %>% mutate(freq = n / sum(n)) %>%
+  ungroup() %>% filter(freq > 0.07)
+
+df.correspond.mres.mtg$Allen <- factor(df.correspond.mres.mtg$Allen, levels = df.correspond.mres.mtg$Allen %>% unique)
+
+
+
+msub_order_allen_mtg <- df.correspond.mres.mtg %>% split(.$Allen) %>% lapply(function(x) {x %$% setNames(n, KU) %>% `/`(sum(.))}) %>% 
+  sapply(function(y) as.numeric(msub_ranks[names(y)[which.max(y)]])  + 
+           sum(msub_ranks[names(y)] * y) / 10
+         ) %>% sort() %>% names()
+
+df.correspond.mres.mtg %<>% mutate(KU = factor(KU, levels = msub_order), Allen = factor(Allen, levels = msub_order_allen_mtg))
+```
+
+
+
+
+   
+      
+```{r fig.width = 6.17, fig.height = 17.72}      
+plot.corresp.hres.mtg <- plotAlluviumHigh(df.correspond.hres.mtg, 0.65, 0.58)
+plot.corresp.hres.mtg
+```
+
+
+
+
+```{r fig.width = 6.17, fig.height = 17.72}      
+plot.corresp.mres.mtg <- plotAlluviumMed(df.correspond.mres.mtg, 0.4, 0.53)
+plot.corresp.mres.mtg
+```
+
+```{r fig.width = 6.17, fig.height = 5}
+plot.subtype.mtg <-
+  con_mtg_schizo$plotGraph(groups = annot_tranfer_mtg_highres$labels,
+                    alpha = 0.1, size = 0.6,
+                    font.size = 4, show.legend = F, plot.na = F
+                    ) +
+    scale_color_manual(values = high.pal) +
+  theme_void() +
+  labs(subtitle = "KU high resolution subtypes\n\nKU - Allen MTG alignment") +
+  theme(text = element_text(family = "Liberation Sans"), legend.position = "none", plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold"))
+  
+plot.subtype.mtg
+
+```
+
+
+
+```{r fig.width = 6.17, fig.height = 5}
+
+plot.origin.mtg <-
+
+con_mtg_schizo$plotGraph(groups =
+                          setNames(
+                             con_mtg_schizo$getDatasetPerCell()[names(con_mtg_schizo$getDatasetPerCell()) %in% names(annot_tranfer_mtg_highres$labels)] %>% 
+                               gsub("MB.*", "KU", .) %>%    gsub("^H200.*", "Allen", .),
+                              names(con_mtg_schizo$getDatasetPerCell())[names(con_mtg_schizo$getDatasetPerCell()) %in% names(annot_tranfer_mtg_highres$labels)]
+                           ), mark.groups = F, show.legend = T, alpha = 0.02, size = 0.6, font.size = 4, plot.na = F
+) + 
+   guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2))) +
+  
+  theme_void() +
+  labs(subtitle = "Origin of nuclei\n\nKU - Allen MTG alignment") +
+  theme(text = element_text(family = "Liberation Sans"), legend.text = element_text(size = 14), legend.position = "bottom", 
+        plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold"), legend.title = element_blank())
+
+plot.origin.mtg
+```
+
+
+
+
+
+
+### ACC
+```{r}
+#High Res
+
+
+
+df.correspond.hres.acc <-
+  data.frame(
+    KU = factor(annot_tranfer_info_highres$labels[!names(annot_tranfer_info_highres$labels) %>% grepl("MB", .)],
+                levels = hsub_order),
+    Allen = setNames(annotation_allen$cluster_label, annotation_allen$sample_name)[
+      names(annot_tranfer_info_highres$labels[!names(annot_tranfer_info_highres$labels) %>% grepl("MB", .)])]
+    )
+
+
+
+
+
+#sumamrize data and filter - remove correspondence <=7% of corresponding Allen subtypes - some kind of trash
+df.correspond.hres.acc <- df.correspond.hres.acc %>% group_by(., KU, Allen) %>% summarize(., n =  n()) %>% mutate(freq = n / sum(n)) %>%
+  ungroup() %>% filter(freq > 0.07)
+
+df.correspond.hres.acc$Allen <- factor(df.correspond.hres.acc$Allen, levels = df.correspond.hres.acc$Allen %>% unique)
+
+
+
+hsub_order_allen_acc <- df.correspond.hres.acc %>% split(.$Allen) %>% lapply(function(x) {x %$% setNames(n, KU) %>% `/`(sum(.))}) %>% 
+  sapply(function(y) as.numeric(hsub_ranks[names(y)[which.max(y)]])  + 
+           sum(hsub_ranks[names(y)] * y) / 10
+         ) %>% sort() %>% names()
+
+df.correspond.hres.acc %<>% mutate(KU = factor(KU, levels = hsub_order), Allen = factor(Allen, levels = hsub_order_allen_acc))
+
+```  
+
+
+
+```{r}
+#Medium Res
+
+
+
+df.correspond.mres.acc <-
+  data.frame(
+    KU = factor(annot_tranfer_info_midres$labels[!names(annot_tranfer_info_midres$labels) %>% grepl("MB", .)],
+                levels = msub_order),
+    Allen = setNames(annotation_allen$cluster_label, annotation_allen$sample_name)[
+      names(annot_tranfer_info_midres$labels[!names(annot_tranfer_info_midres$labels) %>% grepl("MB", .)])]
+    )
+
+
+
+
+
+#sumamrize data and filter - remove correspondence <=7% of corresponding Allen subtypes - some kind of trash
+df.correspond.mres.acc <- df.correspond.mres.acc %>% group_by(., KU, Allen) %>% summarize(., n =  n()) %>% mutate(freq = n / sum(n)) %>%
+  ungroup() %>% filter(freq > 0.07)
+
+df.correspond.mres.acc$Allen <- factor(df.correspond.mres.acc$Allen, levels = df.correspond.mres.acc$Allen %>% unique)
+
+
+
+msub_order_allen_acc <- df.correspond.mres.acc %>% split(.$Allen) %>% lapply(function(x) {x %$% setNames(n, KU) %>% `/`(sum(.))}) %>% 
+  sapply(function(y) as.numeric(msub_ranks[names(y)[which.max(y)]])  + 
+           sum(msub_ranks[names(y)] * y) / 10
+         ) %>% sort() %>% names()
+
+df.correspond.mres.acc %<>% mutate(KU = factor(KU, levels = msub_order), Allen = factor(Allen, levels = msub_order_allen_acc))
+```
+
+
+
+
+   
+      
+```{r fig.width = 6.17, fig.height = 17.72}      
+plot.corresp.hres.acc <- plotAlluviumHigh(df.correspond.hres.acc, 0.65, 0.58)
+plot.corresp.hres.acc
+```
+
+
+
+
+```{r fig.width = 6.17, fig.height = 17.72}      
+plot.corresp.mres.acc <- plotAlluviumMed(df.correspond.mres.acc, 0.4, 0.53)
+plot.corresp.mres.acc
+```
+
+
+
+
+```{r fig.width = 6.17, fig.height = 5}
+plot.subtype.acc <-
+  con_new$plotGraph(groups = annot_tranfer_info_highres$labels,
+                    alpha = 0.1, size = 0.6,
+                    font.size = 4, show.legend = F, plot.na = F
+                    ) +
+    scale_color_manual(values = high.pal) +
+  theme_void() +
+  labs(subtitle = "KU - Allen ACC (CgGr) alignment") +
+  theme(text = element_text(family = "Liberation Sans"), legend.position = "none", plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold"))
+  
+  
+  
+plot.subtype.acc
+
+```
+
+
+```{r fig.width = 6.17, fig.height = 5}
+
+plot.origin.acc <-
+
+con_new$plotGraph(groups =
+                          setNames(
+                             con_new$getDatasetPerCell()[names(con_new$getDatasetPerCell()) %in% names(annot_tranfer_info_highres$labels)] %>% 
+                               gsub("MB.*", "KU", .) %>%gsub("^H200.*", "Allen", .),
+                              names(con_new$getDatasetPerCell())[names(con_new$getDatasetPerCell()) %in% names(annot_tranfer_info_highres$labels)]
+                           ), mark.groups = F, show.legend = T, alpha = 0.05, size = 0.6, font.size = 4
+) + 
+   guides(colour = guide_legend(override.aes = list(alpha = 1, size = 2))) +
+  
+  theme_void() +
+  labs(subtitle = "KU - Allen ACC (CgGr) alignment") +
+  theme(text = element_text(family = "Liberation Sans"), legend.text = element_text(size = 14), legend.position = "bottom", 
+        plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold"), legend.title = element_blank())
+
+plot.origin.acc
+```
+
+
+
+
+### Suppl Fig CORRESPOND:
+
+```{r fig.width = 12.76, fig.height = 17.72}
+fig.s6_correspond2 <-
+  
+  plot.corresp.hres.acc + plot.corresp.mres.acc +
+  plot_layout(ncol = 2) &
+  plot_annotation(title = "KU - Allen ACC (CgGr) correspondence") & theme(plot.title = element_text(family = "Liberation Sans", size = 18, face = "bold",
+                                                                                                             hjust = 0.5))
+
+fig.s6_correspond2
+```
+
+
+```{r fig.width = 12.76, fig.height = 17.72}
+fig.s6_correspond <-
+  
+  plot.corresp.hres.mtg + plot.corresp.mres.mtg +
+  plot_layout(ncol = 2) &
+  plot_annotation(title = "KU - Allen MTG correnspondence") & theme(plot.title = element_text(family = "Liberation Sans", size = 18, face = "bold",
+                                                                                                             hjust = 0.5))
+
+fig.s6_correspond
+```
+
+
+```{r fig.width = 12.76, fig.height = 17.72}
+fig.s6_correspond3 <-
+  
+  plot.corresp.hres.m1c + plot.corresp.mres.m1c +
+  plot_layout(ncol = 2) &
+  plot_annotation(title = "KU - Allen M1C correspondence") & theme(plot.title = element_text(family = "Liberation Sans", size = 18, face = "bold",
+                                                                                                             hjust = 0.5))
+
+fig.s6_correspond3
+```
+
+
+
+```{r fig.width = 12.76, fig.height = 17.72}
+fig.s6_correspond0 <-
+  plot.subtype.mtg + plot.origin.mtg +
+  plot.subtype.acc + plot.origin.acc +
+  plot.subtype.m1c + plot.origin.m1c +
+  
+  plot_layout(ncol = 2) &
+  plot_annotation(title = "Alignment of KU and Allen ACC (CgGr), M1C and MTG datasets") & 
+  theme(plot.title = element_text(family = "Liberation Sans", size = 18, face = "bold", hjust = 0.5), plot.margin = unit(c(0.8, 0, 0 ,0), "cm"))
+  
+
+fig.s6_correspond0
+
+
+```
+
+
+
+```{r}
+ggsave("./plots/fig.s6_correspond.pdf", fig.s6_correspond, device = cairo_pdf, width = 12.76, height = 17.72, units = "in", dpi = 600)
+ggsave("./plots/fig.s6_correspond2.pdf", fig.s6_correspond2, device = cairo_pdf, width = 12.76, height = 17.72, units = "in", dpi = 600)
+ggsave("./plots/fig.s6_correspond3.pdf", fig.s6_correspond3, device = cairo_pdf, width = 12.76, height = 17.72, units = "in", dpi = 600)
+ggsave("./plots/fig.s6_correspond0.pdf", fig.s6_correspond0, device = cairo_pdf, width = 12.76, height = 17.72, units = "in", dpi = 600)
+```
+
+
+
+
+
+
