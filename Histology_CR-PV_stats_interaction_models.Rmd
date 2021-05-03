@@ -1,0 +1,102 @@
+---
+title: "Untitled"
+output:
+  word_document: default
+  html_document: default
+---
+
+### *Data frame:*
+```{r, echo=FALSE, message=FALSE}
+library(multcomp)
+library(lme4)
+library(nlme)
+library(ggthemes)
+library(ggplot2)
+sumd <- read.table("alldata.csv", header=TRUE, sep=";", dec=",")
+sumd$diag <- as.factor(sumd$diag)
+sumd$gender <- as.factor(sumd$gender)
+sumd$Layer <- as.factor(sumd$Layer)
+sumd$source <- as.factor(sumd$source)
+str(sumd)
+
+# note: parvalbumin densities are stored in the variable named "density"
+```
+
+```{r}
+all_in = lme(density ~ diag*Layer+gender+age+pmi+Layer:pmi, random = ~1|ID, data=sumd, na.action = na.exclude)
+summary(all_in)
+qqnorm(resid(all_in))
+qqline(resid(all_in))
+reff = ranef(all_in)
+qqnorm(reff[["(Intercept)"]])
+qqline(reff[["(Intercept)"]])
+hist(reff[["(Intercept)"]]) 
+```
+
+```{r}
+all_in = lme(density ~ diag*Layer+gender+age+pmi+Layer:age, random = ~1|ID, data=sumd, na.action = na.exclude)
+summary(all_in)
+qqnorm(resid(all_in))
+qqline(resid(all_in))
+reff = ranef(all_in)
+qqnorm(reff[["(Intercept)"]])
+qqline(reff[["(Intercept)"]])
+hist(reff[["(Intercept)"]]) 
+```
+
+```{r}
+all_in = lme(density ~ diag*Layer+gender+age+pmi+Layer:gender, random = ~1|ID, data=sumd, na.action = na.exclude)
+summary(all_in)
+qqnorm(resid(all_in))
+qqline(resid(all_in))
+reff = ranef(all_in)
+qqnorm(reff[["(Intercept)"]])
+qqline(reff[["(Intercept)"]])
+hist(reff[["(Intercept)"]]) 
+```
+
+```{r}
+all_in = lme(density ~ diag*Layer*pmi, random = ~1|ID, data=sumd, na.action = na.exclude)
+summary(all_in)
+qqnorm(resid(all_in))
+qqline(resid(all_in))
+reff = ranef(all_in)
+qqnorm(reff[["(Intercept)"]])
+qqline(reff[["(Intercept)"]])
+hist(reff[["(Intercept)"]]) 
+```
+
+### Calretinin densities
+```{r}
+all_inCR = lme(calretinin ~ diag*Layer+gender+age+pmi, random = ~1|ID, data=sumd, na.action = na.exclude)
+summary(all_inCR)
+qqnorm(resid(all_inCR))
+qqline(resid(all_inCR))
+reff = ranef(all_inCR)
+qqnorm(reff[["(Intercept)"]])
+qqline(reff[["(Intercept)"]])
+hist(reff[["(Intercept)"]])
+```
+
+```{r}
+all_inCR = lme(calretinin ~ diag*Layer+gender+age+pmi+Layer:age, random = ~1|ID, data=sumd, na.action = na.exclude)
+summary(all_inCR)
+qqnorm(resid(all_inCR))
+qqline(resid(all_inCR))
+reff = ranef(all_inCR)
+qqnorm(reff[["(Intercept)"]])
+qqline(reff[["(Intercept)"]])
+hist(reff[["(Intercept)"]])
+```
+
+```{r}
+all_inCR = lme(calretinin ~ diag+Layer+gender+age+pmi+Layer:gender, random = ~1|ID, data=sumd, na.action = na.exclude)
+summary(all_inCR)
+qqnorm(resid(all_inCR))
+qqline(resid(all_inCR))
+reff = ranef(all_inCR)
+qqnorm(reff[["(Intercept)"]])
+qqline(reff[["(Intercept)"]])
+hist(reff[["(Intercept)"]])
+```
+
