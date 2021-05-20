@@ -27,6 +27,7 @@ library(dplyr)
 library("car") #leveneTest
 library("ggsignif") #geom_signif stat_signif
 library(scales) #for different formating of scale numbers
+library("Matrix")
 
 
 ```
@@ -120,6 +121,82 @@ cms_scz <- lapply(setNames(c("MB14", "MB15", "MB17"), c("MB14", "MB15", "MB17"))
 
 ## Plotting functions
 
+### Signif function - p val to *
+
+```{r}
+#Define Significance function for changing p values to *
+signif <- function(x) {
+  
+  y <- x
+  y[x <= 0.001] <- "***"
+  y[x <= 0.01 & x > 0.001] <- "**"
+  y[x <= 0.05 & x > 0.01] <- "*"
+  y[x > 0.05] <- "NS"
+  y[is.nan(x)] <- NaN
+  y[is.na(x) & !is.nan(x)] <- NA
+ 
+  
+  
+  
+  return(y)
+}
+
+```
+
+
+
+### null.length function - to make NULL if annotation vector has 0 lenght
+
+```{r}
+
+null.lenth.signif <- function(x, y) {
+  
+  if (signif(x)[pastes(y)][
+        x[pastes(y)] <= 0.05 & !is.na(x[pastes(y)])] %>% length > 0) {
+  
+  
+  signif(x)[pastes(y)][
+        x[pastes(y)] <= 0.05 & !is.na(x[pastes(y)])]
+  
+  
+} else {
+          
+  NULL
+        }
+
+  
+}
+  
+
+
+
+
+
+null.length <- function(vect, x, y) {
+  
+  if (x[pastes(y)][
+        x[pastes(y)] <= 0.05 & !is.na(x[pastes(y)])] %>% length > 0) {
+  
+  
+  vect[
+        x[pastes(y)] <= 0.05 & !is.na(x[pastes(y)])]
+  
+  
+} else {
+          
+  NULL
+        }
+
+  
+}
+
+
+
+
+
+```
+
+
 ```{r}
 null.length.signif2 <- function(x) {
   
@@ -165,6 +242,20 @@ null.length.2 <- function(vect, x) {
 
 
 
+### pastes function to paste subtype name + layer in plots comfortably
+
+```{r}
+
+pastes <- function(x) {
+  c(paste0(x, ".L1"), paste0(x, ".L2"), paste0(x, ".L3"), paste0(x, ".L4"), paste0(x, ".L5"),
+     paste0(x, ".L6")#,  paste0(x, ".WM")
+    )
+  
+  
+}
+
+
+```
 
 
 
@@ -203,7 +294,7 @@ allen_10x_cm_non_neural <- allen_10x_cm[, colnames(allen_10x_cm) %in%
       allen.10x.m1.annot$sample_name[allen.10x.m1.annot$class_label == "Non-Neuronal"]]
 
 #save non-neural countmatrices
-write_rds(allen_10x_cm_non_neural, "./rds_objects/allen_10x_m1_non_neur.rds")
+#write_rds(allen_10x_cm_non_neural, "./rds_objects/allen_10x_m1_non_neur.rds")
 
 
 #make annotations:
@@ -231,7 +322,7 @@ anno_allen_10x <- list(
 
 #save annotation
 
-write_rds(anno_allen_10x, "./rds_objects/anno_allen_10x.rds")
+#write_rds(anno_allen_10x, "./rds_objects/anno_allen_10x.rds")
 
 
 
@@ -1523,6 +1614,33 @@ visium_allen_plot <- lapply(setNames(c("MB11","MB12", "MB14", "MB15", "MB18-2", 
 names(visium_allen_plot) <- names(visium_allen_plot) %>% gsub("MB18-2", "MB18.2", .)
 ```
 
+## Import layer labels with filtered out iffy areas
+
+```{r}
+
+layers.filter.list <- lapply(
+  setNames(c("MB11", "MB12", "MB14", "MB15", "MB18.2", "MB22", "MB23", "MB7"),
+  c("MB11", "MB12", "MB14", "MB15", "MB18.2", "MB22", "MB23", "MB7")),
+  
+  function(x) {
+    df <- read.csv(paste0("/home/mbatiuk/projects/human_schizo/MB6-MB23/2ndary/schizo_visium/layers_filtered/", x, ".csv"), 
+             header = T)
+    setNames(df[, 2], df[, 1])
+    
+    
+  }
+  
+  
+    
+    
+  )
+  
+  
+
+
+```
+
+
 
 ## add layers
 
@@ -1569,9 +1687,7 @@ visium_allen_plot <- lapply(visium_allen_plot, function(x) {
 
 
 
-str(visium_allen2$MB18.2)
 
-(visium_allen2$MB18.2$Layers == "Exclude") %>% sum
 
 
 ```
