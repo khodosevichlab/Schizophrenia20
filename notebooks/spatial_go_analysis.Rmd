@@ -1,0 +1,296 @@
+---
+title: "Analysis of spatial GO pathways"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: '3'
+  html_notebook:
+    toc: yes
+    toc_depth: 3
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(conos)
+library(pagoda2)
+library(magrittr)
+library(tidyverse)
+library(pbapply)
+library(dataorganizer)
+library(Seurat)
+library(Matrix)
+library(ComplexHeatmap)
+
+theme_set(theme_bw())
+devtools::load_all()
+
+plotPath <- function(...) OutputPath("go_analysis", ...)
+```
+
+## Load data
+
+```{r}
+samples <- read_rds(CachePath("spatial_samples.rds"))
+cond_per_sample_spat <- c(MB12="SCZ", MB14="SCZ", MB22="SCZ", MB23="SCZ", 
+                          MB7="CNT", MB15="CNT", `MB18-2`="CNT", MB11="CNT")
+samp_per_cond_spat <- split(names(cond_per_sample_spat), cond_per_sample_spat)
+
+deconv_path <- "/home/viktor_petukhov/Data/Schizophrenia/deconv_v2/stereoscope_res/"
+for(n in names(samples)) {
+  samples[[n]]$deconv_probs <- read.table(paste0(deconv_path, n, "_cm.tsv"))
+  cm <- samples[[n]]$cm
+  samples[[n]]$mit_frac <- Matrix::colSums(cm[grep("^MT-", rownames(cm)),]) / Matrix::colSums(cm)
+}
+
+deconv_layers <- "/home/viktor_petukhov/Data/Schizophrenia/deconv_v2/annotation_v2/" %>% 
+  list.files(full.names=T) %>% lapply(read.csv, header=F) %>% 
+  lapply(function(df) df %$% setNames(as.character(V2), V1)) %>% Reduce(c, .)
+
+# deconv_layers <- c(L2_CUX2_LAMP5="L1-2", L3_CUX2_PRSS12="L3", L4_5_FEZF2_LRRK1="L4-5", 
+#   L5_6_FEZF2_TLE4="L5-6")[deconv_layers] %>% setNames(names(deconv_layers))
+
+con_sc <- Conos$new(read_rds("~pkharchenko/konstantin/schizo/repro/con.rds"))
+annot_sc <- read_rds("~mbatiuk/projects/human_schizo/MB6-MB23/2ndary/ctx_layers_SCZ_ALLEN/rds_objects/annotations_scz2.rds")
+annot_spat <- lapply(samples, `[[`, "annotation") %>% Reduce(c, .)
+
+gos_sc <- read_rds("/d0-bayes/home/rasmusr/schizo_plots/goslW.rds")
+
+table(deconv_layers)
+```
+
+```{r}
+table(annot_spat)
+```
+
+Hand-made annotation:
+
+```{r, fig.width=12, fig.height=6}
+lapply(samples, function(s) embeddingPlot(s$position, groups=s$annotation)) %>% 
+  cowplot::plot_grid(plotlist=., ncol=4, labels=names(.))
+```
+
+Annotation based on deconvolution:
+
+```{r, fig.width=12, fig.height=6}
+lapply(samples, function(s) embeddingPlot(s$position, groups=deconv_layers)) %>% 
+  cowplot::plot_grid(plotlist=., ncol=4, labels=names(.))
+```
+
+## Plot GOs
+
+```{r}
+go_df <- names(gos_sc$high$up) %>% setNames(., .) %>% 
+  lapply(function(n) as_tibble(gos_sc$high$up[[n]]@result) %>% mutate(CellType=n)) %>% 
+  plyr::rbind.fill()
+```
+
+```{r}
+gos_sc_filt <- gos_sc %>% lapply(lapply, function(x) x) %>% .["high"] %>% .[[1]]
+gos_sc_aggr <- gos_sc_filt %>% names() %>% lapply(function(dir) {
+  gos_sc_filt[[dir]] %>% names() %>%
+    lapply(function(type) {
+      gos_sc_filt[[dir]][[type]]@result %>% 
+        filter(p.adjust < 0.05) %>% 
+        mutate(Type=type, Direction=dir) %>% 
+        {if(nrow(.) < 4) . else .[1:3,]}
+    })
+}) %>% 
+  do.call(c, .) %>% .[sapply(., nrow) > 0] %>% do.call(rbind, .) %>%
+  .[order(.$p.adjust, decreasing=T),] %>% split(.$Direction) %>% lapply(function(df) {
+  df$Description %<>% make.unique() %>% factor(., levels=.)
+  df$p.adjust %<>% log10() %>% {. * -1}
+  df
+})
+```
+
+```{r, fig.width=9, fig.height=9}
+ggplot(gos_sc_aggr$up, aes(p.adjust, Description, fill=Type)) + 
+  geom_bar(stat="identity") +
+  theme_bw() +
+  labs(x="-log10(adj. P)", y="", fill="Cell type", title="Top GO terms for up-regulated DE genes") +
+  geom_vline(xintercept = 1.3, linetype="dotted")
+```
+
+## Analyze diff. expression
+
+We take only genes that have > 1 UMI in at least 5% of cells in at least 60% of the spatial samples.
+
+```{r}
+expressed_genes_spat <- lapply(samples, function(s) names(which(Matrix::rowMeans(s$cm > 1) > 0.05))) %>% 
+  unlist() %>% table() %>% .[. > length(samples) * 0.6] %>% names()
+
+length(expressed_genes_spat)
+```
+
+```{r, message=FALSE}
+con_spat <- lapply(samples, `[[`, "p2") %>% Conos$new()
+de_spat_layers <- getPerCellTypeDE(con_spat, groups=as.factor(deconv_layers),
+                                   sample.groups=samp_per_cond_spat, ref.level="CNT")
+
+de_spat_annot <- getPerCellTypeDE(con_spat, groups=as.factor(annot_spat),
+                                  sample.groups=samp_per_cond_spat, ref.level="CNT")
+```
+
+## Compare GO pathways
+
+```{r}
+goDfToMatrix <- function(go.df, selected.gos=NULL, p.val.col="p.adjust") {
+  go.df$pvalue <- go.df[[p.val.col]]
+  res <- dplyr::select(go.df, Type, Description, pvalue) %>% 
+     dplyr::mutate(pvalue=-log10(pvalue)) %>% 
+    tidyr::spread(Type, pvalue) %>% as.data.frame() %>%
+    set_rownames(.$Description) %>% .[, 2:ncol(.)]
+  
+  if (!is.null(selected.gos)) {
+    res <- res[selected.gos,] %>% set_rownames(selected.gos)
+  }
+
+  res %<>% as.matrix()
+  res[is.na(res)] <- 0
+  return(res)
+}
+
+extractAllGODf <- function(go.results) {
+  go.results <- lapply(go.results, function(x) x@result) %>% .[sapply(., nrow) > 0]
+  go.results <- names(go.results) %>% 
+    lapply(function(n) cbind(go.results[[n]],Type=n)) %>% Reduce(rbind,.)
+  return(go.results)
+}
+
+plotPValueHeatmap <- function(df, ...) {
+  as.matrix(df) %>% 
+    Heatmap(..., border=T, show_row_dend=F, cluster_columns=F,
+            heatmap_legend_param=list(title='-log10(p-value)'), 
+            row_names_max_width=unit(8, "cm"), row_names_gp=gpar(fontsize = 10))
+}
+
+plotPValueDfHeatmap <- function(df, col, p.threshold=0.05, exclude.types=NULL) {
+  filter(df, p.adjust < p.threshold) %>% 
+    filter(!(Type %in% exclude.types)) %>% goDfToMatrix() %>% 
+    plotPValueHeatmap(col=col)
+}
+```
+
+```{r}
+go_datas <- c("BP", "CC", "MF") %>% setNames(., .) %>%
+  pblapply(function(n) clusterProfiler:::get_GO_data(org.Hs.eg.db::org.Hs.eg.db, n, "ENTREZID") %>%
+           as.list() %>% as.environment())
+```
+
+```{r, message=FALSE, warning=FALSE}
+gos_spat <- list(
+  # layers=calculateGos(de_spat_layers, n.top.genes=500),
+  annot=calculateGos(de_spat_annot, go_datas, n.top.genes=500),
+  # annot_filt=lapply(de_spat_annot, function(x) 
+  #   x$res %>% .[intersect(rownames(.), expressed_genes_spat),]) %>% 
+  #   calculateGos(go_datas, n.top.genes=500)
+)
+```
+
+```{r}
+gos_spat_dfs <- lapply(gos_spat, lapply, extractAllGODf)
+```
+
+```{r, message=FALSE, warning=FALSE}
+gos_spat_clust <- lapply(gos_spat, lapply, clusterGos, n.clusters=20, max.pval=0.05)
+```
+
+```{r}
+cols <- list(up=circlize::colorRamp2(c(0, 6), c("grey98", "red")),
+             down=circlize::colorRamp2(c(0, 6), c("grey98", "blue")))
+```
+
+### Full GO heatmaps
+
+```{r, fig.width=6, fig.height=9, message=FALSE}
+pdf(plotPath("istvan", "all_up.pdf"), width=6, height=9)
+(plt <- plotPValueDfHeatmap(gos_spat_dfs$annot$up, cols$up))
+r <- dev.off()
+plt
+```
+
+```{r, fig.width=6, fig.height=70, message=FALSE}
+pdf(plotPath("istvan", "all_down.pdf"), width=6, height=70)
+plotPValueDfHeatmap(gos_spat_dfs$annot$down, cols$down)
+r <- dev.off()
+```
+
+```{r, fig.width=6, fig.height=4, message=FALSE}
+pdf(plotPath("istvan", "clusts_up.pdf"), width=6, height=4)
+(plt <- plotPValueHeatmap(gos_spat_clust$annot$up$summary, cols$up))
+r <- dev.off()
+write_csv(gos_spat_clust$annot$up$joint, plotPath("istvan", "clusts_up.csv"))
+
+plt
+```
+
+```{r, fig.width=6, fig.height=4, message=FALSE}
+pdf(plotPath("istvan", "clusts_down.pdf"), width=6, height=4)
+(plt <- plotPValueHeatmap(gos_spat_clust$annot$down$summary, cols$down))
+r <- dev.off()
+write_csv(gos_spat_clust$annot$down$joint, plotPath("istvan", "clusts_down.csv"))
+
+plt
+```
+
+```{r, fig.width=6, fig.height=6, message=FALSE}
+pdf(plotPath("expression", "all_up_l1.pdf"), width=6, height=60)
+plotPValueDfHeatmap(gos_spat_dfs$layers$up, cols$up)
+r <- dev.off()
+
+pdf(plotPath("expression", "all_up.pdf"), width=6, height=6)
+(plt <- plotPValueDfHeatmap(gos_spat_dfs$layers$up, cols$up, exclude.types="L1"))
+r <- dev.off()
+plt
+```
+
+```{r, fig.width=6, fig.height=25, message=FALSE}
+pdf(plotPath("expression", "all_down_l1.pdf"), width=6, height=25)
+plotPValueDfHeatmap(gos_spat_dfs$layers$down, cols$down)
+r <- dev.off()
+
+pdf(plotPath("expression", "all_down.pdf"), width=6, height=25)
+(plt <- plotPValueDfHeatmap(gos_spat_dfs$layers$down, cols$down, exclude.types="L1"))
+r <- dev.off()
+plt
+```
+
+### Spatial heatmaps for scRNA-seq GOs
+
+```{r}
+gos_spat_dfs_filt <- lapply(gos_spat_dfs, function(dfs) {
+  names(dfs) %>% setNames(., .) %>% 
+    lapply(function(n) {
+      filter(dfs[[n]], Description %in% gos_sc_aggr[[n]]$Description) %>% 
+        mutate(p.adjust=p.adjust(pvalue, method="BH"))
+    })
+})
+```
+
+```{r, fig.width=6, fig.height=1.5, message=FALSE}
+pdf(plotPath("istvan", "sc_up.pdf"), width=6, height=1.5)
+(plt <- plotPValueDfHeatmap(gos_spat_dfs_filt$annot$up, cols$up))
+r <- dev.off()
+plt
+```
+
+```{r, fig.width=6, fig.height=3.5, message=FALSE}
+pdf(plotPath("istvan", "sc_down.pdf"), width=6, height=3.5)
+(plt <- plotPValueDfHeatmap(gos_spat_dfs_filt$annot$down, cols$down))
+r <- dev.off()
+plt
+```
+
+```{r, fig.width=6, fig.height=3, message=FALSE}
+pdf(plotPath("expression", "sc_up.pdf"), width=6, height=3)
+(plt <- plotPValueDfHeatmap(gos_spat_dfs_filt$layers$up, cols$up))
+r <- dev.off()
+plt
+```
+
+```{r, fig.width=6, fig.height=3, message=FALSE}
+pdf(plotPath("expression", "sc_down.pdf"), width=6, height=3)
+(plt <- plotPValueDfHeatmap(gos_spat_dfs_filt$layers$down, cols$down))
+r <- dev.off()
+plt
+```

@@ -1,0 +1,177 @@
+---
+title: "Prepare deconvolution"
+output: html_notebook
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(conos)
+library(pagoda2)
+library(magrittr)
+library(tidyverse)
+library(pbapply)
+library(dataorganizer)
+library(Seurat)
+library(scrattch.io)
+
+theme_set(theme_bw())
+```
+
+## Misha's integration
+
+```{r}
+cm_glia <- read_rds("/home/mbatiuk/projects/human_schizo/MB6-MB23/2ndary/schizo_visium/rds_objects/allen_10x_m1_non_neur.rds")
+annot_glia <- read_rds("/home/mbatiuk/projects/human_schizo/MB6-MB23/2ndary/schizo_visium/rds_objects/anno_allen_10x.rds")
+
+so <- read_rds("/home/mbatiuk/projects/human_schizo/MB6-MB23/2ndary/schizo_visium/rds_objects/scz_all_integrated.rds")
+annotation <- read_rds("/home/mbatiuk/projects/human_schizo/MB6-MB23/2ndary/schizo_visium/rds_objects/annotation_scz_allen.rds")
+
+so$subtypes_med <- annotation$med[names(Idents(so))]
+so$subtypes_high <- annotation$high[names(Idents(so))]
+
+so$origin <- setNames(
+  gsub("^[^(MB)].*", "Allen", names(annotation$high)) %>% gsub("^MB.*", "Scz", .),
+  names(annotation$high))[names(Idents(so))]
+
+so$origin %>% table
+```
+
+```{r}
+so_subs <- subset(so, (origin == "Scz") & (subtypes_high != "Glia"))
+```
+
+```{r, fig.width=10, fig.height=10}
+embeddingPlot(so_subs@reductions$umap@cell.embeddings, groups=so$subtypes_high, size=0.1, font.size=c(2,3))
+```
+
+```{r}
+visium_allen <- read_rds("/home/mbatiuk/projects/human_schizo/MB6-MB23/2ndary/schizo_visium/rds_objects/visium_allen.rds")
+```
+
+```{r}
+var_genes_3k <- visium_allen$MB11 %>% FindVariableFeatures(assay="Spatial", nfeatures=3000) %>% 
+  .@assays %>% .$Spatial %>% .@var.features
+
+var_genes_1k <- visium_allen$MB11 %>% FindVariableFeatures(assay="Spatial", nfeatures=1000) %>% 
+  .@assays %>% .$Spatial %>% .@var.features
+
+length(intersect(rownames(cm_glia), var_genes_3k))
+```
+
+```{r}
+# rowMeans(visium_allen$MB11@assays$Spatial@counts[so_subset@assays$RNA@var.features,] > 0) %>% qplot(bins=100)
+# rowMeans(visium_allen$MB11@assays$Spatial@counts[var_genes,] > 0) %>% qplot(bins=100)
+# rowMeans(so@assays$RNA@counts[var_genes,] > 0) %>% qplot(bins=100)
+```
+
+## Save the data
+
+```{r}
+asChn <- function(x) setNames(as.character(x), names(x))
+```
+
+```{r}
+cm_merged <- so_subs@assays$RNA@counts %>% list(cm_glia) %>% 
+  conos:::mergeCountMatrices(transposed=F)
+
+annotation_merged <- asChn(so_subs$subtypes_med) %>% c(asChn(annot_glia$med))
+annotation_merged_high <- asChn(so_subs$subtypes_high) %>% c(asChn(annot_glia$high))
+
+p_vals <- colSums(cm_merged > 0) %>% split(annotation_merged[names(.)]) %>% 
+  sapply(mean)
+
+ggplot(tibble(y=p_vals, n=names(p_vals))) +
+  geom_bar(aes(x=n, y=y), stat="identity") +
+  theme(axis.text=element_text(angle=45, hjust=1))
+```
+
+```{r}
+cm_merged[var_genes_3k,] %>% Matrix::t() %>% as.matrix() %>% 
+  as.data.frame() %>% data.table::fwrite("~/Data/Schizophrenia/cm_with_glia2.tsv", sep="\t", row.names=T)
+
+cm_norm <- Pagoda2$new(cm_merged)$counts
+cm_norm[, var_genes_3k] %>% as.matrix() %>% as.data.frame() %>% 
+  data.table::fwrite("~/Data/Schizophrenia/cm_with_glia_norm2.tsv", sep="\t", row.names=T)
+```
+
+```{r}
+tr <- names(visium_allen) %>% 
+    pblapply(function(n) {
+      cm <- visium_allen[[n]]@assays$Spatial@counts
+      Matrix::t(cm[var_genes_3k,]) %>% as.matrix() %>% as.data.frame() %>% 
+        data.table::fwrite(paste0("~/Data/Schizophrenia/", n, "_cm.tsv"), sep="\t", row.names=T)
+
+      cm.norm <- Pagoda2$new(cm, verbose=FALSE)$counts
+      cm.norm[, var_genes_3k] %>% as.matrix() %>% as.data.frame() %>% 
+        data.table::fwrite(paste0("~/Data/Schizophrenia/", n, "_cm_norm.tsv"), sep="\t", row.names=T)
+      
+      cm.norm[, var_genes_1k] %>% as.matrix() %>% as.data.frame() %>% 
+        data.table::fwrite(paste0("~/Data/Schizophrenia/", n, "_cm_norm_1k.tsv"), sep="\t", row.names=T)
+})
+```
+
+```{r}
+as_tibble(annotation_merged, rownames="cell") %>% 
+  set_colnames(c("cell", "bio_celltype")) %>% 
+  write_delim("~/Data/Schizophrenia/annotation_med2.tsv", delim="\t")
+
+as_tibble(annotation_merged_high, rownames="cell") %>% 
+  set_colnames(c("cell", "bio_celltype")) %>% 
+  write_delim("~/Data/Schizophrenia/annotation_med_high.tsv", delim="\t")
+```
+
+## Read the results
+
+```{r}
+samples_sp <- read_rds(CachePath("spatial_samples.rds"))
+```
+
+```{r}
+# mb11_deconv <- read.table("~/Data/Schizophrenia/mb11_prob_assign_stereoscope.tsv")
+# mb11_deconv <- read.csv("~/Data/Schizophrenia/mb11_prob_assign.csv", row.names=1)
+# mb11_deconv <- read.csv("~/Data/Schizophrenia/deconv_v2/mb11_prob_assign_tangram.csv", row.names=1)
+mb11_deconv <- read.table("~/Data/Schizophrenia/deconv_v2/mb11_prob_assign_stereoscope.tsv")
+
+annot_deconv <- colnames(mb11_deconv)[apply(mb11_deconv, 1, which.max)]
+```
+
+
+```{r}
+embeddingPlot(samples_sp$MB11$position, groups=setNames(annot_deconv, paste0("MB11_", rownames(mb11_deconv))), show.legend=T, 
+              legend.position=c(0, 0), mark.groups=F, shuffle.colors=T)
+```
+
+```{r}
+sapply(mb11_deconv, max) %>% range
+```
+
+```{r, fig.width=10, fig.height=16, message=FALSE}
+names(mb11_deconv) %>% sort() %>% lapply(function(n)
+  embeddingPlot(samples_sp$MB11$position, colors=setNames(mb11_deconv[[n]], paste0("MB11_", rownames(mb11_deconv))), 
+                title=n, show.legend=T, legend.position=c(0, 0), color.range=c(0, 0.5))) %>% # , color.range=c(0, 0.5)
+  cowplot::plot_grid(plotlist=., ncol=3)
+
+# ggsave(OutputPath("mb11_tangram_deconv2.pdf"))
+ggsave(OutputPath("mb11_stereoscope_deconv2.pdf"))
+```
+
+## Test all
+
+```{r}
+cm_path <- "/home/viktor_petukhov/Data/Schizophrenia/deconv_v2/stereoscope_res/"
+cm_names <- strsplit(list.files(cm_path), "_") %>% sapply(`[[`, 1)
+cm_names[cm_names == "MB18.2"] <- "MB18-2"
+samples <- read_rds(CachePath("spatial_samples.rds"))
+
+cms_deconv <- list.files(cm_path, full.names=T) %>% lapply(read.table) %>% setNames(cm_names)
+```
+
+```{r, fig.width=10, fig.height=16, message=FALSE}
+lapply(names(cms_deconv), function(nc) {
+  print(nc)
+  cm <- cms_deconv[[nc]]
+  names(cm) %>% sort() %>% lapply(function(n)
+    embeddingPlot(samples_sp[[nc]]$position, colors=setNames(cm[[n]], paste0(nc, "_", rownames(cm))), 
+                  title=n, show.legend=T, legend.position=c(0, 0), color.range=c(0, 0.5))) %>% # , color.range=c(0, 0.5)
+    cowplot::plot_grid(plotlist=., ncol=3)
+})
+```
