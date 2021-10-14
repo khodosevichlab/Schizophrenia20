@@ -398,9 +398,10 @@ ggplot(celload$data, aes(y = ind, x = values, fill = ind)) +
 ### 5\. Expression shift magnitued/distance
 
 ``` r
-cao$estimateExpressionShiftMagnitudes(dist="cor", min.cells.per.sample = 10, n.permutations = 1000, normalize.both = FALSE, n.cores = 20)
-caom$estimateExpressionShiftMagnitudes(dist="cor", min.cells.per.sample = 10, n.permutations = 1000, normalize.both = FALSE, n.cores = 20)
-
+cao$estimateExpressionShiftMagnitudes(n.permutations=2500, min.cells.per.sample=10, 
+                                      min.samp.per.type=5, min.gene.frac=0.05, dist.type="cross.ref")
+caom$estimateExpressionShiftMagnitudes(n.permutations=2500, min.cells.per.sample=10, 
+                                      min.samp.per.type=5, min.gene.frac=0.05, dist.type="cross.ref")
 cao$plotExpressionShiftMagnitudes(show.jitter = FALSE) + scale_fill_manual(values =med.pal) + ylab("normalized distance")
 caom$plotExpressionShiftMagnitudes(show.jitter = FALSE) + scale_fill_manual(values =med.pal) + ylab("normalized distance")
 ```
@@ -411,8 +412,9 @@ function for ploting estimation of layers
 #caoinput is the cacoa object
 #layerdtf is the dataframe of medium and high transfered annotations from Allen Brain data
 #pal are the palettes
+
 plotLayers <- function(caoinput, layerdtf, pal){
-    x <- caoinput$plotExpressionShiftMagnitudes(type='box')
+    x <- caoinput
     mv <- tapply(x$data$val,x$data$Type,median)
       df <- layerdtf; df$ndem <- mv[as.character(df$Subtypes)]; df <- na.omit(df);
 
@@ -423,14 +425,13 @@ plotLayers <- function(caoinput, layerdtf, pal){
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 13), plot.title = element_text(hjust = 0.5, size = 18),
         axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
-        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-        text = element_text(family = "Helvetica"), axis.title.x = element_blank())
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title.x = element_blank())
+  
   return(p)
+  
 }
-
-
-layhigh <- plotLayers(cao, ldf_high, med.pal)
-laymed <- plotLayers(caom, ldf_med, med.pal)
+layhigh <- plotLayers(cao$plotExpressionShiftMagnitudes(jitter.alpha = 0.02), ldf_high, high.pal)
+laymed <- plotLayers(caom$plotExpressionShiftMagnitudes(jitter.alpha = 0.02), ldf_med, high.pal)
 ```
 
 ``` r
@@ -438,8 +439,6 @@ laymed <- plotLayers(caom, ldf_med, med.pal)
 ggpubr::ggarrange(cao$plotExpressionShiftMagnitudes(show.jitter = FALSE) + scale_fill_manual(values =high.pal) + ylab("normalized distance") + theme(axis.text.x=element_blank()),
                   layhigh,ncol=1,nrow=2,heights=c(0.5,1),align = 'v')
 ```
-
-<img src="C:/Users/Katarina/Desktop/scznotebooks/fig2e.jpg" width="60%" style="display: block; margin: auto;" />
 
 ``` r
 #Figure 2.D
@@ -481,8 +480,10 @@ cao$plotExpressionDistance(notch = TRUE, show.significance = FALSE, alpha = 0.1)
 common expression shifts
 
 ``` r
-cao$estimateCommonExpressionShiftMagnitudes(n.cores = 20, n.randomizations = 100, n.subsamples = 50)
-caom$estimateCommonExpressionShiftMagnitudes(n.cores = 20, n.randomizations = 100, n.subsamples = 50)
+cao$estimateCommonExpressionShiftMagnitudes(n.permutations=2500, min.cells.per.sample=10, 
+                                            min.samp.per.type=5, min.gene.frac=0.05)
+caom$estimateCommonExpressionShiftMagnitudes(n.permutations=2500, min.cells.per.sample=10, 
+                                            min.samp.per.type=5, min.gene.frac=0.05)
 ```
 
 Extended data figure 5.H
@@ -505,24 +506,6 @@ plotLayersCommon <- function(caoinput, layerdtf, pal){
   return(p)
   
 }
-
-plotLayersCommon_bar <- function(caoinput, layerdtf, pal){
-    x <- caoinput
-    mv <- tapply(x$data$mean,x$data$Type,mean) 
-      df <- layerdtf; df$ndem <- mv[as.character(df$Subtypes)]; df <- na.omit(df);
-
-        p <- ggplot(df, aes(x = reorder(Subtypes,ndem,mean), y = Layers,  color = Subtypes)) +
-  geom_jitter(width = 0.35, height = 0.45, alpha = 0.4, size = 0.15, show.legend = F) +
-  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5, 5.5), linetype = 2, size = 0.6, colour = "grey") +
-  scale_color_manual(values = pal) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 13), plot.title = element_text(hjust = 0.5, size = 18),
-        axis.text.y = element_text(size = 15), axis.title = element_text(size = 15),
-        panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title.x = element_blank())
-  
-  return(p)
-  
-}
 ```
 
 ``` r
@@ -530,8 +513,6 @@ c1 <- plotLayersCommon(cao$plotCommonExpressionShiftMagnitudes(type = "box", sho
 ggpubr::ggarrange(cao$plotCommonExpressionShiftMagnitudes(type = "box", show.subsampling.variability = FALSE) + ylab("normalized distance (common)") + theme(axis.text.x=element_blank()),
                   c1,ncol=1,nrow=2,heights=c(0.5,1),align = 'v')
 ```
-
-<img src="C:/Users/Katarina/Desktop/scznotebooks/commonh.jpg" width="60%" style="display: block; margin: auto;" />
 
 ``` r
 c4 <- plotLayersCommon(caom$plotCommonExpressionShiftMagnitudes(type = "box", show.subsampling.variability = FALSE), ldf_med,med.pal)

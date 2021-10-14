@@ -761,75 +761,175 @@ library(pbapply)
 go_datas <- c("BP", "CC", "MF") %>% setNames(., .) %>%
   pblapply(function(n) clusterProfiler:::get_GO_data(org.Hs.eg.db::org.Hs.eg.db, n, "ENTREZID") %>%
            as.list() %>% as.environment())
-
-gos_spat <- list(annot = calculateGos(de_spat_annot, go_datas, n.top.genes=500))
-gos_spat_dfs <- lapply(gos_spat, lapply, extractAllGODf)
-gos_spat_clust <- lapply(gos_spat, lapply, clusterGos, n.clusters=20, max.pval=0.05)
 ```
 
 ``` r
-cols <- list(up=circlize::colorRamp2(c(0, 1.3), c("grey98", "red")),
-             down=circlize::colorRamp2(c(0, 1.3), c("grey98", "blue")))
+gos_spat <- list(
+  annot=calculateGos(de_spat_annot, go_datas, n.top.genes=500)
+)
+
+gos_spat$annot <- lapply(gos_spat$annot,function(x)
+    lapply(x, clusterProfiler::bitr, 'SYMBOL', 'ENTREZID', org.Hs.eg.db::org.Hs.eg.db) %>%
+      lapply(`[[`, "ENTREZID"))
+
+gos.up <- mapply(function(x,y) {
+    enrichGOOpt(gene = x, universe = y, ont = "BP", goData = go_datas[['BP']], 
+              OrgDB = org.Hs.eg.db::org.Hs.eg.db, readable = T)},
+  x = gos_spat$annot[[c("up")]],
+  y = gos_spat$annot[[c("all")]])
+
+gos.down <- mapply(function(x,y) {
+    enrichGOOpt(gene = x, universe = y, ont = "BP", goData = go_datas[['BP']], 
+              OrgDB = org.Hs.eg.db::org.Hs.eg.db, readable = T)},
+  x = gos_spat$annot[[c("down")]],
+  y = gos_spat$annot[[c("all")]])
+
+
+gos_spat <- list("up"= gos.up, "down"= gos.down)
 ```
 
-\#UP GO
+Calculating clusters for Visium upregulated GO
 
 ``` r
-plotPValueHeatmap(gos_spat_clust$annot$up$summary, cols$up)
+gj <- function(gos){
+  gos_filt <- lapply(gos,function(x) filter(x@result))
+  gos_joint <- do.call(rbind,gos_filt)
+  
+  gos_joint <- gos_filt %>% .[sapply(., nrow) > 0] %>% names() %>% setNames(., .) %>% lapply(function(n) cbind(gos_filt[[n]],Type=n)) %>% Reduce(rbind,.)
+  return(gos_joint)
+}
+
+g <- lapply(gov$annot, gj)
+
+g$down <- g$down[g$down$pvalue < 0.001,]
+g$down$p.adjust2 <- g$down$pvalue %>% p.adjust("bonferroni")
+gdc <- g$down[g$down$p.adjust2 < 0.05,]
+
+
+gdclusts <- distanceBetweenTerms(gdc) %>%  hclust(method='ward.D2') %>% cutree(20) 
+gdpc <- split(names(gdclusts), gdclusts)
+ngdc_per_clust <- sapply(gdpc, length)
+
+
+gdc %<>% mutate(GOClust=gdclusts[Description])
+gdname_per_clust <- gdc %>% group_by(GOClust, Description) %>% summarise(pvalue=exp(mean(log(pvalue)))) %>% 
+    split(.$GOClust) %>% sapply(function(df) df$Description[which.min(df$pvalue)])
+gdc %<>% mutate(GOClustName=gdname_per_clust[as.character(GOClust)])
+
+gdc_bp_summ_df <- gdc %>% group_by(Type, GOClustName) %>% 
+    summarise(p.adjust=min(p.adjust2)) %>% ungroup() %>% mutate(p.adjust=-log10(p.adjust)) %>% 
+    tidyr::spread(Type, p.adjust) %>% as.data.frame() %>% set_rownames(.$GOClustName) %>% .[, 2:ncol(.)] #%>% .[, type_order[type_order %in% colnames(.)]]
+  gdc_bp_summ_df[is.na(gdc_bp_summ_df)] <- 0
+```
+
+``` r
+cols <- list(up=colorRamp2(c(0, 4), c("grey98", "red")),down=colorRamp2(c(0, 4), c("grey98", "blue")))
+n.clusters <- 20; max.pval <- 0.05;
+```
+
+``` r
+hm1 <- Heatmap(as.matrix(gdc_bp_summ_df),
+             col=cols$down,
+              border=T,
+              show_row_dend=F,
+              show_column_dend=F, 
+              heatmap_legend_param = list(title = '-log10(adj.p)'), 
+              row_names_max_width = unit(10, "cm"),
+              row_names_gp = gpar(fontsize = 10), 
+              column_names_max_height = unit(8, "cm"),
+        column_order = order(as.numeric(gsub("L", "", colnames(gdc_bp_summ_df)))))
 ```
 
 <img src="C:/Users/Katarina/Desktop/scznotebooks/goupvisium.jpg" width="60%" style="display: block; margin: auto;" />
 
-``` r
-pal <- setNames(RColorBrewer::brewer.pal(6, name = "Set2"), paste0("L", seq(1,6)))
-upgo <- split.data.frame(gos_spat_dfs$annot$up, gos_spat_dfs$annot$up$Type)
-upgo <- lapply(upgo, head,10)
-upgo <- data.table::rbindlist(upgo)
-upgo <- upgo[order(-p.adjust),]
-upgo$Description %<>% make.unique()
-upgo$Description %<>% factor(., levels=.)
-upgo$p.adjust %<>% log10() %>% {. * -1}
+Calculating clusters for Visium downregulated GO
 
-ggplot(upgo, aes(p.adjust, Description, fill=Type)) + 
-  geom_bar(stat = "identity", position = "dodge") +
-  theme_bw() +
-  labs(x="-log10(adj. P)", y="", fill="Layers - spatial data", title="Top 10 GO terms for up-regulated DE genes (spatial)") + 
-  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = pal[upgo$Type %>% rev %>% unique]) +
-    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(upgo$Description), ".", fixed= TRUE), "[[", 1),upgo$Description))
+``` r
+g <- lapply(gov$annot, gj)
+
+g$up <- g$up[g$up$pvalue < 0.001,]
+g$up$p.adjust2 <- g$up$pvalue %>% p.adjust("bonferroni")
+guc <- g$up[g$up$p.adjust2 < 0.05,]
+
+
+guclusts <- distanceBetweenTerms(guc) %>%  hclust(method='ward.D2') %>% cutree(20) 
+gupc <- split(names(guclusts), guclusts)
+nguc_per_clust <- sapply(gupc, length)
+
+
+guc %<>% mutate(GOClust=guclusts[Description])
+guname_per_clust <- guc %>% group_by(GOClust, Description) %>% summarise(pvalue=exp(mean(log(pvalue)))) %>% 
+    split(.$GOClust) %>% sapply(function(df) df$Description[which.min(df$pvalue)])
+guc %<>% mutate(GOClustName=guname_per_clust[as.character(GOClust)])
+
+
+guc_bp_summ_df <- guc %>% group_by(Type, GOClustName) %>% 
+    summarise(p.adjust=min(p.adjust2)) %>% ungroup() %>% mutate(p.adjust=-log10(p.adjust)) %>% 
+    tidyr::spread(Type, p.adjust) %>% as.data.frame() %>% set_rownames(.$GOClustName) %>% .[, 2:ncol(.)] #%>% .[, type_order[type_order %in% colnames(.)]]
+  guc_bp_summ_df[is.na(guc_bp_summ_df)] <- 0
 ```
 
-<img src="C:/Users/Katarina/Desktop/scznotebooks/goup10.jpg" width="60%" style="display: block; margin: auto;" />
-
-\#DOWN GO
-
 ``` r
-plotPValueHeatmap(gos_spat_clust$annot$down$summary, cols$down)
+hm2 <- Heatmap(as.matrix(guc_bp_summ_df),
+             col=cols$up,
+              border=T,
+              show_row_dend=F,
+              show_column_dend=F, 
+              heatmap_legend_param = list(title = '-log10(adj.p)'), 
+              row_names_max_width = unit(10, "cm"),
+              row_names_gp = gpar(fontsize = 10), 
+              column_names_max_height = unit(8, "cm"),
+        column_order = order(as.numeric(gsub("L", "", colnames(guc_bp_summ_df)))))
 ```
 
 <img src="C:/Users/Katarina/Desktop/scznotebooks/godownvisium.jpg" width="60%" style="display: block; margin: auto;" />
 
-``` r
-downgo <- split.data.frame(gos_spat_dfs$annot$down, gos_spat_dfs$annot$down$Type)
-downgo <- lapply(downgo, head,10)
-downgo <- data.table::rbindlist(downgo)
-downgo <- downgo[order(-p.adjust),]
-downgo$Description %<>% make.unique()
-downgo$Description %<>% factor(., levels=.)
-downgo$p.adjust %<>% log10() %>% {. * -1}
+Barplots for GO spatial data
 
-ggplot(downgo, aes(p.adjust, Description, fill=Type)) + 
+``` r
+library(magrittr)
+gcc <- rbindlist(list("down" = gdc, "up" = guc), idcol = "dir")
+gcc <- split.data.frame(gcc[order(gcc$p.adjust2),], gcc[order(gcc$p.adjust2),]$Type) %>% lapply(., function(x) { head(x,10)}) %>% rbindlist %>% .[order(.[["p.adjust2"]]),]
+
+res.s9.up <- gcc %>% filter(dir == "up") #for up
+res.s9.down <- gcc %>% filter(dir == "down")
+res.s9.down <- head(res.s9.down,15)
+upgo <- res.s9.up[order(p.adjust2, decreasing = T),]
+downgo <- res.s9.down[order(p.adjust2, decreasing = T),]
+
+library(ggplot2)
+upgo$Description %<>% make.unique()
+upgo$Description %<>% factor(., levels=.)
+upgo$p.adjust2 %<>% log10() %>% {. * -1}
+```
+
+``` r
+pal <- setNames(RColorBrewer::brewer.pal(6, name = "Paired"), paste0("L", seq(1,6)))
+upv <- ggplot(upgo, aes(p.adjust2, Description, fill=Type)) + 
   geom_bar(stat = "identity", position = "dodge") +
   theme_bw() +
-  labs(x="-log10(adj. P)", y="", fill="Layers - spatial data", title="Top 10 GO terms for down-regulated DE genes (spatial)") + 
+  labs(x="-log10(adj.p)", y="", fill="Layers - spatial data", title="Top 15 GO terms for up-regulated DE genes (spatial)") + 
+  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = pal[upgo$Type %>% rev %>% unique]) +
+    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(upgo$Description), ".", fixed= TRUE), "[[", 1),upgo$Description))
+
+downgo$Description %<>% make.unique()
+downgo$Description %<>% factor(., levels=.)
+downgo$p.adjust2 %<>% log10() %>% {. * -1}
+
+downv <- ggplot(downgo, aes(p.adjust2, Description, fill=Type)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_bw() +
+  labs(x="-log10(adj.p)", y="", fill="Layers - spatial data", title="Top 15 GO terms for down-regulated DE genes (spatial)") + 
   geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = pal[downgo$Type %>% rev %>% unique]) +
     scale_y_discrete(labels=setNames(sapply(strsplit(as.character(downgo$Description), ".", fixed= TRUE), "[[", 1),downgo$Description))
 ```
 
-<img src="C:/Users/Katarina/Desktop/scznotebooks/godown10.jpg" width="60%" style="display: block; margin: auto;" />
+<img src="C:/Users/Katarina/Desktop/scznotebooks/goup10.jpg" width="60%" style="display: block; margin: auto;" />
 
 ### snRNAseq and Visium overlap
 
 ``` r
+#goslW is the single nuclei rna GO result object
 gos_sc <- goslW
 go_df <- names(gos_sc$high$up) %>% setNames(., .) %>% 
   lapply(function(n) as_tibble(gos_sc$high$up[[n]]@result) %>% mutate(CellType=n)) %>% 
@@ -840,71 +940,183 @@ gos_sc_aggr <- gos_sc_filt %>% names() %>% lapply(function(dir) {
   gos_sc_filt[[dir]] %>% names() %>%
     lapply(function(type) {
       gos_sc_filt[[dir]][[type]]@result %>% 
-        filter(pvalue < 0.05) %>% 
+     #   filter(pvalue < 0.001) %>% 
         mutate(Type=type, Direction=dir) %>% 
         {if(nrow(.) < 4) . else .[1:3,]}
     })
 }) %>% 
   do.call(c, .) %>% .[sapply(., nrow) > 0] %>% do.call(rbind, .) %>%
   .[order(.$p.adjust, decreasing=T),] %>% split(.$Direction) %>% lapply(function(df) {
-  df$Description %<>% make.unique() %>% factor(., levels=.)
-  df$p.adjust %<>% log10() %>% {. * -1}
+  #df$Description %<>% make.unique() %>% factor(., levels=.)
+  #df$p.adjust %<>% log10() %>% {. * -1}
   df
+})
+
+gos_spat_dfs <- lapply(gos_spat_dfs, lapply, function(x){
+  x %>% filter(pvalue < 0.001)
 })
 
 gos_spat_dfs_filt <- lapply(gos_spat_dfs, function(dfs) {
   names(dfs) %>% setNames(., .) %>% 
     lapply(function(n) {
-      filter(dfs[[n]], Description %in% gos_sc_aggr[[n]]$Description) %>% 
-        mutate(p.adjust=p.adjust(pvalue, method="BH"))
+      filter(dfs[[n]], Description %in% gos_sc_aggr[[n]]$Description) #%>% 
+       # mutate(p.adjust=p.adjust(pvalue, method="BH"))
     })
 })
+
+gvgs <- lapply(gos_spat_dfs_filt, lapply, function(x) x %>% filter(pvalue < 0.05))
+
+gvgs$annot$up$p.adjust3 <- gvgs$annot$up$pvalue %>% sort %>% p.adjust(method = "BH")
+gvgs$annot$down$p.adjust3 <- gvgs$annot$down$pvalue %>% sort %>% p.adjust(method = "BH")
 ```
 
 ``` r
-plotPValueDfHeatmap(gos_spat_dfs_filt$annot$up, cols$up, p.threshold = 0.05) + ggtitle("Upregulated GO terms; Visium:snRNAseq overlap")
+#funcs
+plotPValueHeatmap <- function(df, ...) {
+  as.matrix(df) %>% 
+    Heatmap(..., border=T, show_row_dend=F, cluster_columns=F,
+            heatmap_legend_param=list(title='-log10(adj.p)'), 
+            row_names_max_width=unit(12, "cm"), row_names_gp=gpar(fontsize = 10))
+}
+plotPValueDfHeatmap <- function(df, col, p.threshold=0.05, exclude.types=NULL) {
+  filter(df, p.adjust3 < p.threshold) %>% 
+    filter(!(Type %in% exclude.types)) %>% goDfToMatrix() %>% 
+    plotPValueHeatmap(col=col)}
+
+goDfToMatrix <- function(go.df, selected.gos=NULL, p.val.col="p.adjust3") {
+  go.df$pvalue <- go.df[[p.val.col]]
+  res <- dplyr::select(go.df, Type, Description, pvalue) %>% 
+     dplyr::mutate(pvalue=-log10(pvalue)) %>% 
+    tidyr::spread(Type, pvalue) %>% as.data.frame() %>%
+    set_rownames(.$Description) %>% .[, 2:ncol(.)]
+  
+  if (!is.null(selected.gos)) {
+    res <- res[selected.gos,] %>% set_rownames(selected.gos)
+  }
+  res %<>% as.matrix()
+  res[is.na(res)] <- 0
+  return(res)
+}
+```
+
+``` r
+cols <- list(up=circlize::colorRamp2(c(0, 4), c("grey98", "red")),
+             down=circlize::colorRamp2(c(0, 4), c("grey98", "blue")))
+library(ComplexHeatmap)
+
+draw(plotPValueDfHeatmap(gvgs$annot$down, cols$down, p.threshold = 0.05), column_title = "Downregulated GO terms; Visium:snRNAseq overlap")
+draw(plotPValueDfHeatmap(gvgs$annot$up, cols$up, p.threshold = 0.05), column_title = "Upregulated GO terms; Visium:snRNAseq overlap")
 ```
 
 <img src="C:/Users/Katarina/Desktop/scznotebooks/overlapup.jpg" width="60%" style="display: block; margin: auto;" />
 
 ``` r
-upgo <- split.data.frame(gos_spat_dfs_filt$annot$up, gos_spat_dfs_filt$annot$up$Type)
+extractAllGODf <- function(go.results) {
+  go.results <- lapply(go.results, function(x) x@result) %>% .[sapply(., nrow) > 0]
+  go.results <- names(go.results) %>% 
+    lapply(function(n) cbind(go.results[[n]],Type=n)) %>% Reduce(rbind,.)
+  return(go.results)
+}
 
-upgo <- lapply(upgo, head,3)
-upgo <- data.table::rbindlist(upgo)
-upgo <- upgo[order(-p.adjust),]
+gos_spat_dfs <- lapply(gov, lapply, extractAllGODf)
+```
+
+``` r
+upgo <- gvgs$annot$up
+
+upgo <- upgo[order(upgo$p.adjust3, decreasing = T),]
 upgo$Description %<>% make.unique()
 upgo$Description %<>% factor(., levels=.)
-upgo$p.adjust %<>% log10() %>% {. * -1}
-library(ggplot2)
-upgobar <- ggplot(upgo, aes(p.adjust, Description, fill=Type)) + 
-  geom_bar(stat = "identity", position = "dodge") + 
-  theme_bw()+
-  theme(plot.title.position = "plot")+
-  labs(x="-log10(adj. P)", y="", fill="Layers - spatial data", title="Top 3 upregulated GO terms; Visium:snRNA-seq overlap") + 
+upgo$p.adjust3 %<>% log10() %>% {. * -1}
+
+ups <- ggplot(upgo, aes(p.adjust3, Description, fill=Type)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_bw() +
+  labs(x="-log10(adj.p)", y="", fill="Layers", title="Upregulated GO terms; Visium:snRNAseq overlap") + 
   geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = pal[upgo$Type %>% rev %>% unique]) +
     scale_y_discrete(labels=setNames(sapply(strsplit(as.character(upgo$Description), ".", fixed= TRUE), "[[", 1),upgo$Description))
 ```
 
-<img src="C:/Users/Katarina/Desktop/scznotebooks/goupv.jpg" width="60%" style="display: block; margin: auto;" />
-
 ``` r
-downgo <- split.data.frame(gos_spat_dfs_filt$annot$down, gos_spat_dfs_filt$annot$down$Type)
+downgo <- gvgs$annot$down
 
-downgo <- lapply(downgo, head,3)
-downgo <- data.table::rbindlist(downgo)
-downgo <- downgo[order(-p.adjust),]
+downgo <- downgo[order(downgo$p.adjust3, decreasing = T),]
 downgo$Description %<>% make.unique()
 downgo$Description %<>% factor(., levels=.)
-downgo$p.adjust %<>% log10() %>% {. * -1}
+downgo$p.adjust3 %<>% log10() %>% {. * -1}
 
-downgobar <- ggplot(downgo, aes(p.adjust, Description, fill=Type)) + 
-  geom_bar(stat = "identity", position = "dodge") + 
-  theme_bw()+
-  theme(plot.title.position = "plot")+
-  labs(x="-log10(adj. P)", y="", fill="Layers - spatial data", title="Top 3 downregulated GO terms; Visium:snRNA-seq overlap") +  
-  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = pal[downgo$Type %>% rev %>% unique]) + 
-    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(downgo$Description), ".", fixed= TRUE), "[[", 1),downgo$Description))
+downs <- ggplot(downgo, aes(p.adjust3, Description, fill=Type)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_bw() +
+  labs(x="-log10(adj.p)", y="", fill="Layers", title="Downregulated GO terms; Visium:snRNAseq overlap") + 
+  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = pal[downgo$Type %>% rev %>% unique]) +
+    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(downgo$Description), ".", fixed= TRUE), "[[", 1),downgo$Description)); downs
 ```
 
 <img src="C:/Users/Katarina/Desktop/scznotebooks/godownv.jpg" width="60%" style="display: block; margin: auto;" />
+
+functions used:
+
+``` r
+enrichGOOpt <- function (gene, OrgDB, goData, keyType = "ENTREZID", ont = "MF", pvalueCutoff = 0.05,
+                         pAdjustMethod = "BH", universe=NULL, qvalueCutoff = 0.2, minGSSize = 10,
+                         maxGSSize = 500, readable = FALSE, pool = FALSE) {
+  ont %<>% toupper %>% match.arg(c("BP", "CC", "MF"))
+
+  res <- clusterProfiler:::enricher_internal(gene, pvalueCutoff = pvalueCutoff,
+                                             pAdjustMethod = pAdjustMethod, universe = universe,
+                                             qvalueCutoff = qvalueCutoff, minGSSize = minGSSize,
+                                             maxGSSize = maxGSSize, USER_DATA = goData)
+  if (is.null(res))
+    return(res)
+
+  res@keytype <- keyType
+  res@organism <- clusterProfiler:::get_organism(OrgDB)
+  if (readable) {
+    res <- DOSE::setReadable(res, OrgDB)
+  }
+  res@ontology <- ont
+
+  return(res)
+}
+
+distanceBetweenTerms <- function(go.df) {
+  genes.per.go <- sapply(go.df$geneID, strsplit, "/") %>% setNames(go.df$Description)
+  all.go.genes <- unique(unlist(genes.per.go))
+  all.gos <- unique(go.df$Description)
+
+  genes.per.go.mat <- matrix(0, length(all.go.genes), length(all.gos)) %>%
+    `colnames<-`(all.gos) %>% `rownames<-`(all.go.genes)
+
+  for (i in 1:length(genes.per.go)) {
+    genes.per.go.mat[genes.per.go[[i]], go.df$Description[[i]]] <- 1
+  }
+
+  return(dist(t(genes.per.go.mat), method="binary"))
+}
+
+calculateGos <- function(de, go.datas, n.top.genes=300,n.cores=1) {
+  de <- de[unlist(lapply(de,is.list))]
+
+  # add Z scores
+  de <- lapply(de,function(d) {
+    res.table <- d$res;
+    res.table$Z <- -qnorm(res.table$pval/2)
+    res.table$Z[is.na(res.table$Z)] <- 0
+    res.table$Za <- -qnorm(res.table$padj/2)
+    res.table$Za[is.na(res.table$Za)] <- 0
+    res.table$Z <- res.table$Z  * sign(res.table$log2FoldChange)
+    res.table$Za <- res.table$Za  * sign(res.table$log2FoldChange)
+    d$res <- res.table;
+    d
+  })
+  
+    gns <- list(down=lapply(de,function(x) rownames(x$res)[order(x$res$Z,decreasing=F)[1:n.top.genes]]),
+              up=lapply(de,function(x) rownames(x$res)[order(x$res$Z,decreasing=T)[1:n.top.genes]]),
+              all=lapply(de,function(x) rownames(x$res)))
+
+    
+    return(gns)
+   
+}
+```

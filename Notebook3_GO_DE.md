@@ -27,36 +27,6 @@ del.fixedWboot <- list(high=de.high,med=de.med)
 ```
 
 ``` r
-#Figure 5.A
-library(dplyr)
-
-#barplot
-x <- lapply(de$high,function(x) sum(na.omit(x$res$pvalue<1e-3))) %>% unlist %>% sort
-Fig5.A <- ggplot(data.frame(cell=names(x),nde=x),aes(x=reorder(cell,nde),y=nde,fill=cell)) + 
-  geom_bar(stat="identity")+ 
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size=12),axis.title.x = element_blank()) +
-  ylab("number of DE genes") + 
-  scale_fill_manual(values=high.pal) + 
-  guides(fill=F)
-
-#make the plot for layers
-df <- ldf_high; df$ndem <- x[as.character(df$Subtypes)]; df <- na.omit(df);
-Fig5.AL <- ggplot(df, aes(x = reorder(Subtypes,ndem,mean), y = Layers,  color = Subtypes)) +
-  geom_jitter(width = 0.35, height = 0.45, alpha = 0.4, size = 0.15, show.legend = F) +
-  geom_hline(yintercept = c(1.5, 2.5, 3.5, 4.5, 5.5), linetype = 2, size = 0.6, colour = "grey") +
-  scale_color_manual(values = high.pal) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 12), plot.title = element_text(hjust = 0.5, size = 18),
-        axis.text.y = element_text(size = 14), axis.title = element_text(size = 14),
-        panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title.x = element_blank())
-
-pp <- ggpubr::ggarrange(Fig5.A+theme(axis.text.x=element_blank()),Fig5.AL,ncol=1,nrow=2,heights=c(0.35,1),align = 'v')
-```
-
-<img src="C:/Users/Katarina/Desktop/scznotebooks/fig5b.jpg" width="60%" style="display: block; margin: auto;" />
-
-``` r
 #Figure 5.B
 boot <- lapply(del.fixedWboot$high, function(x){
   de <- data.table::rbindlist(x$subsamples, idcol = "boot")
@@ -157,9 +127,9 @@ distanceBetweenTerms <- function(go.df) {
   return(dist(t(genes.per.go.mat), method="binary"))
 }
 
-calculate.gos <- function(de,n.top.genes=300,n.cores=1) {
+calculate.gos <- function(de, go.datas, n.top.genes=300,n.cores=1) {
   de <- de[unlist(lapply(de,is.list))]
-  
+
   # add Z scores
   de <- lapply(de,function(d) {
     res.table <- d$res;
@@ -173,42 +143,13 @@ calculate.gos <- function(de,n.top.genes=300,n.cores=1) {
     d
   })
   
-  
-  gns <- list(down=lapply(de,function(x) rownames(x$res)[order(x$res$Z,decreasing=F)[1:n.top.genes]]),
+    gns <- list(down=lapply(de,function(x) rownames(x$res)[order(x$res$Z,decreasing=F)[1:n.top.genes]]),
               up=lapply(de,function(x) rownames(x$res)[order(x$res$Z,decreasing=T)[1:n.top.genes]]),
-              all=list(all=unique(unlist(lapply(de,function(x) rownames(x$res))))))
-  
-  gns.entrez <- lapply(gns,function(x) lapply(x, bitr, 'SYMBOL', 'ENTREZID', org.Hs.eg.db) %>% lapply(`[[`, "ENTREZID"))
-  
-  gos <- lapply(gns.entrez[c('up','down')],function(gns) {
-    lapply(gns,enrichGOOpt,universe=gns.entrez$all$all, ont='BP', goData=go_datas[['BP']], readable=T, OrgDB=org.Hs.eg.db)# %>% lapply(function(x) x@result)
-  })
-  
-}
-gos.cluster <- function(gos,n.clusters=20,max.pval=0.05) {
-  gos_filt <- lapply(gos,function(x) filter(x@result,p.adjust<max.pval))
-  gos_joint <- do.call(rbind,gos_filt)
-  
-  gos_joint <- gos_filt %>% .[sapply(., nrow) > 0] %>% names() %>% setNames(., .) %>% lapply(function(n) cbind(gos_filt[[n]],Type=n)) %>% Reduce(rbind,.)
-  go_dist <- distanceBetweenTerms(gos_joint)
-  clusts <- hclust(go_dist,method='ward.D2') %>% cutree(n.clusters)
-  gos_per_clust <- split(names(clusts), clusts)
-  ngos_per_clust <- sapply(gos_per_clust, length)
-  #table(clusts)
-  
-  gos_per_clust <- split(names(clusts), clusts)
-  gos_joint %<>% mutate(GOClust=clusts[Description])
-  name_per_clust <- gos_joint %>% group_by(GOClust, Description) %>% summarise(pvalue=exp(mean(log(pvalue)))) %>% 
-    split(.$GOClust) %>% sapply(function(df) df$Description[which.min(df$pvalue)])
-  gos_joint %<>% mutate(GOClustName=name_per_clust[as.character(GOClust)])
-  
-  # cluster summary
-  go_bp_summ_df <- gos_joint %>% group_by(Type, GOClustName) %>% 
-    summarise(p.adjust=min(p.adjust)) %>% ungroup() %>% mutate(p.adjust=-log10(p.adjust)) %>% 
-    tidyr::spread(Type, p.adjust) %>% as.data.frame() %>% set_rownames(.$GOClustName) %>% .[, 2:ncol(.)] #%>% .[, type_order[type_order %in% colnames(.)]]
-  go_bp_summ_df[is.na(go_bp_summ_df)] <- 0
-  
-  return(list(joint=gos_joint,clusters=clusts,summary=go_bp_summ_df))
+              all=lapply(de,function(x) rownames(x$res)))
+
+    
+    return(gns)
+   
 }
 ```
 
@@ -216,36 +157,85 @@ gos.cluster <- function(gos,n.clusters=20,max.pval=0.05) {
 
 ``` r
 goslW <- lapply(de,calculate.gos,n.top.genes=500)
-
 library(circlize)
-cols <- list(up=colorRamp2(c(0, 6), c("grey98", "red")),down=colorRamp2(c(0, 6), c("grey98", "blue")))
+```
+
+high anno
+
+``` r
+g <- lapply(goslW$high, gj)
+
+g$up <- g$up[g$up$pvalue < 0.001,]
+g$up$p.adjust2 <- g$up$pvalue %>% p.adjust("bonferroni")
+guc <- g$up[g$up$p.adjust2 < 0.05,]
+
+
+guclusts <- distanceBetweenTerms(guc) %>%  hclust(method='ward.D2') %>% cutree(20) 
+gupc <- split(names(guclusts), guclusts)
+nguc_per_clust <- sapply(gupc, length)
+
+
+guc %<>% mutate(GOClust=guclusts[Description])
+guname_per_clust <- guc %>% group_by(GOClust, Description) %>% summarise(pvalue=exp(mean(log(pvalue)))) %>% 
+    split(.$GOClust) %>% sapply(function(df) df$Description[which.min(df$pvalue)])
+guc %<>% mutate(GOClustName=guname_per_clust[as.character(GOClust)])
+
+
+guc_bp_summ_df <- guc %>% group_by(Type, GOClustName) %>% 
+    summarise(p.adjust=min(p.adjust2)) %>% ungroup() %>% mutate(p.adjust=-log10(p.adjust)) %>% 
+    tidyr::spread(Type, p.adjust) %>% as.data.frame() %>% set_rownames(.$GOClustName) %>% .[, 2:ncol(.)] #%>% .[, type_order[type_order %in% colnames(.)]]
+  guc_bp_summ_df[is.na(guc_bp_summ_df)] <- 0
+```
+
+``` r
+g$down <- g$down[g$down$pvalue < 0.001,]
+g$down$p.adjust2 <- g$down$pvalue %>% p.adjust("bonferroni")
+gdc <- g$down[g$down$p.adjust2 < 0.05,]
+
+gdclusts <- distanceBetweenTerms(gdc) %>%  hclust(method='ward.D2') %>% cutree(20) 
+gdpc <- split(names(gdclusts), gdclusts)
+ngdc_per_clust <- sapply(gdpc, length)
+
+
+
+gdc %<>% mutate(GOClust=gdclusts[Description])
+gdname_per_clust <- gdc %>% group_by(GOClust, Description) %>% summarise(pvalue=exp(mean(log(pvalue)))) %>% 
+    split(.$GOClust) %>% sapply(function(df) df$Description[which.min(df$pvalue)])
+gdc %<>% mutate(GOClustName=gdname_per_clust[as.character(GOClust)])
+
+
+gdc_bp_summ_df <- gdc %>% group_by(Type, GOClustName) %>% 
+    summarise(p.adjust=min(p.adjust2)) %>% ungroup() %>% mutate(p.adjust=-log10(p.adjust)) %>% 
+    tidyr::spread(Type, p.adjust) %>% as.data.frame() %>% set_rownames(.$GOClustName) %>% .[, 2:ncol(.)] #%>% .[, type_order[type_order %in% colnames(.)]]
+  gdc_bp_summ_df[is.na(gdc_bp_summ_df)] <- 0
+```
+
+``` r
+cols <- list(up=colorRamp2(c(0, 4), c("grey98", "red")),down=colorRamp2(c(0, 4), c("grey98", "blue")))
 n.clusters <- 20; max.pval <- 0.05;
 ```
 
 ``` r
-cx <- lapply(goslW$high,gos.cluster,n.clusters=n.clusters,max.pval=max.pval)
+hm3 <- Heatmap(as.matrix(guc_bp_summ_df),
+             col=cols$up,
+              border=T,
+              show_row_dend=F,
+              show_column_dend=F, 
+              heatmap_legend_param = list(title = '-log10(adj.p)'), 
+              row_names_max_width = unit(13, "cm"),
+              row_names_gp = gpar(fontsize = 10), 
+              column_names_max_height = unit(8, "cm"))
 ```
 
 ``` r
-#Extended figure 6. A and B
-mu <- Heatmap(as.matrix(cx$up$summary),
-              col=cols$up,
+hm4 <- Heatmap(as.matrix(gdc_bp_summ_df),
+             col=cols$down,
               border=T,
               show_row_dend=F,
               show_column_dend=F, 
-              heatmap_legend_param = list(title = 'Z score'), 
-              row_names_max_width = unit(8, "cm"),
+              heatmap_legend_param = list(title = '-log10(adj.p)'), 
+              row_names_max_width = unit(11, "cm"),
               row_names_gp = gpar(fontsize = 10), 
-              column_names_max_height = unit(8, "cm"))
-
-md <- Heatmap(as.matrix(cx$down$summary),
-              col=cols$down,
-              border=T,
-              show_row_dend=F,
-              show_column_dend=F, 
-              heatmap_legend_param = list(title = 'Z score'), 
-              row_names_max_width = unit(8, "cm"),
-              row_names_gp = gpar(fontsize = 10) , 
               column_names_max_height = unit(8, "cm"))
 ```
 
@@ -256,14 +246,42 @@ md <- Heatmap(as.matrix(cx$down$summary),
 #### d) GO term similarity
 
 ``` r
-#could be done with cacoa, same results
-#this was used just for GO term similarity: Extended data figure 6. C and D
-cao$estimateOntology(type="GO", org.db=org.Hs.eg.db, n.top.genes=500)
+#function used:
+library(tidyverse)
+library(plyr)
+
+plotCustomSimilarities <- function(gosdt){
+gosdt <- data.table(gosdt)
+pathway.df <- gosdt[,c("Description", "Type")] 
+colnames(pathway.df) <- c("Pathway", "Group")
+path.bin <- pathway.df %>%
+        dplyr::select(Pathway, Group) %>%
+        dplyr::mutate(X=1) %>%
+        tidyr::spread(Pathway, X) %>%
+        as.data.frame() %>%
+        magrittr::set_rownames(.$Group) %>%
+        .[, 2:ncol(.)] %>%
+        as.matrix()
+      path.bin[is.na(path.bin)] <- 0
+
+      p.mat <- (1 - (path.bin %>% dist(method="binary") %>% as.matrix)) %>% pmin(0.5)
+      cl.tree <- dist(p.mat) %>% hclust()
+      clust.order <- cl.tree %$% labels[order]
+      clusts <- cutree(cl.tree, h=0.7)[clust.order]
+      clusts[clusts %in% names(which(table(clusts) < 5))] <- max(clusts) + 1
+      clust.lengths <- rle(clusts)$lengths %>% rev
+      diag(p.mat) <- 1
+
+      # Plot
+      plotHeatmap(p.mat, color.per.group=NULL, row.order=clust.order, col.order=rev(clust.order),
+                  legend.title="Similarity", plot.theme=theme_bw()) +
+        scale_fill_distiller(palette="RdYlBu", limits=c(0, 0.5))
+}
 ```
 
 ``` r
-FigE6.C <- cao$plotOntologySimilarities(type = "GO", genes = "up", p.adj = 0.001)
-FigE6.D <- cao$plotOntologySimilarities(type = "GO", genes = "down", p.adj = 0.001)
+plotCustomSimilarities(gdc)
+plotCustomSimilarities(guc)
 ```
 
 <img src="C:/Users/Katarina/Desktop/scznotebooks/hm1.jpg" width="50%" style="display: block; margin: auto;" />
@@ -273,59 +291,78 @@ FigE6.D <- cao$plotOntologySimilarities(type = "GO", genes = "down", p.adj = 0.0
 #### e) Plotting top GO terms for Up and Down DEs
 
 ``` r
-goslW.s9 <- goslW %>% lapply(lapply, function(x) x) %>% .["high"] %>% .[[1]]
-res.s9 <- goslW.s9 %>% 
-  names() %>%
-  lapply(function(dir) {
-    goslW.s9[[dir]] %>% names() %>%
-      lapply(function(type) {
-        goslW.s9[[dir]][[type]]@result %>% 
-          filter(p.adjust < 0.05) %>% 
-          mutate(Type=type, Direction=dir) %>% 
-          {if(nrow(.) < 4) . else .[1:3,]}
-      })
-  }) %>% 
-  do.call(c, .) %>%
-  .[sapply(., nrow) > 0] %>% 
-  do.call(rbind, .) %>%
-  .[order(.$p.adjust, decreasing=T),]
-res.s9.up <- res.s9 %>% filter(Direction == "up") #for up
-res.s9.down <- res.s9 %>% filter(Direction == "down") #for down
+gcc <- rbindlist(list("down" = gdc, "up" = guc), idcol = "dir")
+guc[order(guc$p.adjust2, decreasing = T),]
+
+res.s9.up <- gcc %>% filter(dir == "up")
+res.s9.down <- gcc %>% filter(dir == "down")
+
+upgo <- res.s9.up[order(p.adjust2, decreasing = T),]
+downgo <- res.s9.down[order(p.adjust2, decreasing = T),]
+
+upgo$Description %<>% make.unique()
+upgo$Description %<>% factor(., levels=.)
+upgo$p.adjust2 %<>% log10() %>% {. * -1}
+downgo$Description %<>% make.unique()
+downgo$Description %<>% factor(., levels=.)
+downgo$p.adjust2 %<>% log10() %>% {. * -1}
 ```
 
 ``` r
-#Figure 6.B
-res.s9.up$Description %<>% make.unique()
-res.s9.up$Description %<>% factor(., levels=.)
-res.s9.up$p.adjust %<>% log10() %>% {. * -1}
+p2 <- ggplot(downgo[1:135,], aes(p.adjust2, Description, fill=Type)) + 
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  theme_bw() +
+  labs(x="-log10(adj.p)", y="", fill="Cell types", title="Top GO terms for downregulated DE genes") + 
+  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = high.pal[downgo$Type %>% rev %>% unique]) +
+    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(downgo[1:135,]$Description), ".", fixed= TRUE), "[[", 1),downgo[1:135,]$Description)) + xlim(0,12.5) 
 
-p1 <- ggplot(res.s9.up, aes(p.adjust, Description, fill=Type)) + 
+p1 <- ggplot(downgo[136:270,], aes(p.adjust2, Description, fill=Type)) + 
   geom_bar(stat = "identity", position = "dodge") +
   theme_bw() +
-  labs(x="-log10(adj. P)", y="", fill="Panel B cell types", title="Top GO terms for up-regulated DE genes") +
-  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = high.pal[res.s9.up$Type %>% rev %>% unique]) +
-    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(res.s9.up$Description), ".", fixed= TRUE), "[[", 1),res.s9.up$Description))
-```
+  labs(x="-log10(adj.p)", y="", fill="Cell types", title="All significant GO terms for downregulated DE genes") + 
+  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = high.pal[downgo$Type %>% rev %>% unique]) +
+    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(downgo[136:270,]$Description), ".", fixed= TRUE), "[[", 1),downgo[136:270,]$Description)) + xlim(0,12.5) + guides(fill=guide_legend(ncol=1))
 
-<img src="C:/Users/Katarina/Desktop/scznotebooks/goup2.jpg" width="50%" style="display: block; margin: auto;" />
+legend <- get_legend(
+  p1 + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
 
-``` r
-#Figure 6.A.
-res.s9.down$Description %<>% make.unique()
-res.s9.down$Description %<>% factor(., levels=.)
-res.s9.down$p.adjust %<>% log10() %>% {. * -1}
+x.grob <- textGrob("-log10(adj.p)")
+title <- ggdraw() + draw_label("All significant GO terms for downregulated DE genes", fontface='bold')
 
-p2 <- ggplot(res.s9.down, aes(p.adjust, Description, fill=Type)) + 
-  geom_bar(stat="identity", position = "dodge") +
-  theme_bw() +
-  labs(x="-log10(adj. P)", y="", fill="Panel A cell types", title="Top GO terms for down-regulated DE genes") +
-  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = high.pal[res.s9.down$Type %>% rev %>% unique])  +
-  scale_y_discrete(labels=setNames(sapply(strsplit(as.character(res.s9.down$Description), ".", fixed= TRUE), "[[", 1),res.s9.down$Description)) +
-  guides(fill=guide_legend(ncol=1))
-pdf(file='final_F6.A_high_clean.pdf',width=8,height=9); print(p1); dev.off();
+p <- plot_grid(plotlist = list(p1 + theme(legend.position = "none", axis.title.x = element_blank(), title = element_blank()),p2 + theme(title = element_blank()), legend), rel_widths = c(0.9,0.8, 0.3), ncol = 3, align = "h", axis = "bt")
+grid.arrange(arrangeGrob(plot_grid(title, p, ncol=1, rel_heights=c(0.03, 1)) ,bottom = x.grob))
 ```
 
 <img src="C:/Users/Katarina/Desktop/scznotebooks/godown2.jpg" width="50%" style="display: block; margin: auto;" />
+
+``` r
+p2 <- ggplot(upgo[1:96,], aes(p.adjust2, Description, fill=Type)) + 
+  geom_bar(stat = "identity", position = "dodge", show.legend = FALSE) +
+  theme_bw() +
+  labs(x="-log10(adj.p)", y="", fill="Cell types", title="Top GO terms for upregulated DE genes") + 
+  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = high.pal[upgo$Type %>% rev %>% unique]) +
+    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(upgo[1:96,]$Description), ".", fixed= TRUE), "[[", 1),upgo[1:96,]$Description)) + xlim(0,8) 
+
+p1 <- ggplot(upgo[97:192,], aes(p.adjust2, Description, fill=Type)) + 
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_bw() +
+  labs(x="-log10(adj.p)", y="", fill="Cell types", title="All significant GO terms for upregulated DE genes") + 
+  geom_vline(xintercept = 1.3, linetype="dotted") + scale_fill_manual(values = high.pal[upgo$Type %>% rev %>% unique]) +
+    scale_y_discrete(labels=setNames(sapply(strsplit(as.character(upgo[97:192,]$Description), ".", fixed= TRUE), "[[", 1),upgo[97:192,]$Description))  + guides(fill=guide_legend(ncol=1))
+
+library(cowplot)
+legend <- get_legend(
+  p1 + theme(legend.box.margin = margin(0, 0, 0, 12))
+)
+x.grob <- textGrob("-log10(adj.p)")
+title <- ggdraw() + draw_label("All significant GO terms for upregulated DE genes", fontface='bold')
+
+p <- plot_grid(plotlist = list(p1 + theme(legend.position = "none", axis.title.x = element_blank(), title = element_blank()),p2 + theme(title = element_blank()), legend), rel_widths = c(0.75,0.8, 0.3), ncol = 3, align = "h", axis = "bt")
+grid
+```
+
+<img src="C:/Users/Katarina/Desktop/scznotebooks/goup2.jpg" width="50%" style="display: block; margin: auto;" />
 
 #### f) Comparison of DEs with Pardinas, SFARI and DISGENET
 
