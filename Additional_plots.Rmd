@@ -1,0 +1,103 @@
+---
+title: "Additional notebook:volcano plots + deconvolution marker expression"
+output: html_notebook
+---
+
+
+New plot that shows expression values in ctr vs sz for marker genes used in deconvolution 
+
+```{r}
+getwd()
+demarkers <- read.delim("/home/kdragicevic/RProjects/schizo/lastproj/demarkers.txt") #read in markers used for deconvolution per subtype:
+#L2_3_CUX2
+#L4_6_FEZF2; KEAP1 had p < 0.05
+#L4_RORB
+#L5_6_THEMIS
+
+
+
+#check the statistics for each genes sz vs ctr
+library(data.table)
+test <- data.table(test)
+lapply(test$variable %>% unique, function(x){
+  z <- wilcox.test(test[variable == x & condition == "control", ]$value, test[variable == x & condition == "schizo", ]$value)$p.value
+        names(z) <- x
+        return(z)
+}) %>% unlist %>% data.frame
+
+
+
+df <- psbulk.log1p.df #pseudobulk table for each sample for all genes in our data, was used earlier in other notebooks for plotting per sample expression boxplots
+
+#this was done for all celltypes which had them; the example for L5_6_THEMIS follows:
+test <- melt(df[df$subtype == "L5_6_THEMIS",
+                c(1,2,3,which(colnames(df[df$subtype == "L5_6_THEMIS",]) %in% 
+                                demarkers$L5_6_THEMIS))])
+#check the statistics for each genes sz vs ctr
+library(data.table)
+test <- data.table(test)
+lapply(test$variable %>% unique, function(x){
+  tryCatch({
+  z <- wilcox.test(test[variable == x & condition == "control", ]$value, test[variable == x & condition == "SZ", ]$value)$p.value
+        names(z) <- x
+        return(z)}, error=function(e) NULL)
+}) %>% unlist %>% data.frame
+
+
+
+p <- ggplot(data = test, 
+         aes(y = value, x = variable, fill = condition)) +
+    geom_point(aes(color = condition), position = 
+               position_jitterdodge(dodge.width = 0.7, jitter.width = 0.5), 
+               size = 1.1, alpha = 0.4, show.legend = F) +
+  geom_boxplot(notch = F, outlier.shape = NA, alpha = 0.4, lwd = 0.4, width = 0.7) +
+    stat_summary(fun = "median", geom = "point",
+                 size = 2,
+                 show.legend = F, position = position_dodge(width = 0.7), 
+                 mapping = aes(group = condition), fill = "grey",
+                 shape = 23) + 
+    theme_bw() +
+    theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0.5, size = 12),
+          axis.text.y=element_text(size = 15),
+          axis.title.x = element_blank(),
+          text = element_text(size = 15),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 15),
+          legend.position = "top",
+          plot.subtitle = element_text(size = 15, hjust = 0.5, face = "bold"),
+          panel.grid.minor = element_blank()) +
+          labs(x = NULL, y = "Normalized UMIs") +
+    scale_color_manual(values = c("red", "blue"), labels = c("control", "schizophrenia")) +
+    scale_fill_manual(values = c("red", "blue"), labels = c("control", "schizophrenia")) + ggtitle(unique(test$subtype)) #+
+  #annotate("text", x = 22, y = 4.5, label = "*", size = 7) #we added manually an asterisk for the only gene that showed stat.significance (p< 0.05)
+```
+
+
+DE gene volcano plots:
+
+```{r}
+de <- del.fixedW$high %>% lapply(., "[[", "res") #take only the dataframes with de genes for each subtype
+
+library(EnhancedVolcano)
+dev <- lapply(de, is.null) %>% unlist
+de <- de[dev == FALSE]
+plotsvol <- lapply(de, function(x) EnhancedVolcano(x ,lab = rownames(x), x = 'log2FoldChange',
+                                                         y = 'pvalue', 
+                                                         pCutoff = 0.05,
+                                                         FCcutoff = 1, 
+                                                         pointSize = 1.0,
+                                                         labSize = 4.0,
+                                                         titleLabSize = 10, 
+                                                         subtitleLabSize = 10,
+                                                         title=NULL, 
+                                                         subtitle=NULL, 
+                                                         caption=NULL, 
+                                                         colAlpha = 0.9,
+                                                         col = c('grey70', 'grey60', 'rosybrown3', 'tomato3'),
+                                                         ylim = c(0, -log10(x$pvalue[1]))) + 
+                     theme_bw() + 
+                     theme(legend.position = "none"))
+
+plotsvol <- mapply(function(x,y) x + ggtitle(y), plotsvol, names(plotsvol), SIMPLIFY = FALSE)
+```
+
